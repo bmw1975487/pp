@@ -34,11 +34,14 @@ jobs:
         run: |
           $exe = Join-Path $PWD 'src/PowerPointPalette/bin/Release/net48/PowerPoint_15_Colors_Setup.exe'
           if (-not (Test-Path $exe)) { throw "EXE not found: $exe" }
-          & $exe --self-test
-          if ($LASTEXITCODE -ne 0) {
-            $desktopLog = Join-Path ([Environment]::GetFolderPath('Desktop')) 'PowerPoint_15_Colors_INSTALL_LOG.txt'
-            if (Test-Path $desktopLog) { Get-Content $desktopLog }
-            throw "Self-test failed with exit code $LASTEXITCODE"
+
+          $process = Start-Process -FilePath $exe -ArgumentList '--self-test' -Wait -PassThru
+          $exitCode = $process.ExitCode
+          $desktopLog = Join-Path ([Environment]::GetFolderPath('Desktop')) 'PowerPoint_15_Colors_INSTALL_LOG.txt'
+          if (Test-Path $desktopLog) { Get-Content $desktopLog }
+
+          if ($exitCode -ne 0) {
+            throw "Self-test failed with exit code $exitCode"
           }
 
       - name: Verify RegAsm COM metadata
