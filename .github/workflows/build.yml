@@ -1,9 +1,6 @@
 name: Build PowerPoint 15 Colors
 
 on:
-  push:
-    branches:
-      - powerpoint-palette-addin
   pull_request:
     branches:
       - main
