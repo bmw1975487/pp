@@ -14,6 +14,8 @@
 
 C# / .NET Framework 4.8, `IDTExtensibility2`, `IRibbonExtensibility`, RibbonX и системная регистрация через `RegAsm`. VBA, PPAM, VSTO и `AccessVBOM` не используются.
 
+Установщик сообщает об успехе только после того, как PowerPoint подтвердил подключение COM-надстройки и вызвал загрузку RibbonX-интерфейса.
+
 ## Разработка
 
 Рабочая ветка: `powerpoint-palette-addin`.
@@ -24,4 +26,4 @@ C# / .NET Framework 4.8, `IDTExtensibility2`, `IRibbonExtensibility`, RibbonX и
 - `docs/ARCHITECTURE.md`;
 - `docs/TEST_PLAN.md`.
 
-Сборка GitHub Actions публикует один файл `PowerPoint_15_Colors_Setup.exe` и проверяет self-test и COM-метаданные RegAsm.
+Сборка GitHub Actions публикует один файл `PowerPoint_15_Colors_Setup.exe` и проверяет self-test, COM-метаданные и `CodeBase`, записываемый RegAsm.
