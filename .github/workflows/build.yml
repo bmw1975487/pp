@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - powerpoint-palette-addin
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -52,6 +55,7 @@ jobs:
           $registration = Get-Content $regFile -Raw
           if ($registration -notmatch 'C70E01E0-54E7-4B34-8E33-1DA1471BCF6E') { throw 'CLSID missing from RegAsm output' }
           if ($registration -notmatch 'DOMRF.PowerPointPalette') { throw 'ProgID missing from RegAsm output' }
+          Write-Host $registration
 
       - name: Prepare single-file artifact
         shell: pwsh
