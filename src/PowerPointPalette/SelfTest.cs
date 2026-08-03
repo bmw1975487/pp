@@ -9,33 +9,39 @@ namespace DOMRF.PowerPointPalette
 {
     internal static class SelfTest
     {
-        private sealed class FakeRibbonControl
+        internal sealed class FakeRibbonControl
         {
             public string Tag { get; set; }
         }
 
         public static int Run()
         {
+            DiagnosticsLog.ResetInstallLog();
+            DiagnosticsLog.Install("=== SELF TEST START ===");
+
             try
             {
+                DiagnosticsLog.Install("Stage: palette definition");
                 ValidatePalette();
+
+                DiagnosticsLog.Install("Stage: RibbonX XML");
                 ValidateRibbonXml();
+
+                DiagnosticsLog.Install("Stage: COM class metadata");
                 ValidateComClass();
+
+                DiagnosticsLog.Install("Stage: swatch image conversion");
                 ValidateSwatchConversion();
+
+                DiagnosticsLog.Install("RESULT: SELF_TEST_SUCCESS");
+                DiagnosticsLog.Install("=== SELF TEST END ===");
                 return 0;
             }
             catch (Exception exception)
             {
-                try
-                {
-                    DiagnosticsLog.ResetInstallLog();
-                    DiagnosticsLog.InstallException(exception, "SELF_TEST");
-                    DiagnosticsLog.Install("RESULT: SELF_TEST_FAILURE");
-                }
-                catch
-                {
-                }
-
+                DiagnosticsLog.InstallException(exception, "SELF_TEST");
+                DiagnosticsLog.Install("RESULT: SELF_TEST_FAILURE");
+                DiagnosticsLog.Install("=== SELF TEST END ===");
                 return 1;
             }
         }
