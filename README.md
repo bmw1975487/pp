@@ -1,5 +1,27 @@
 # PowerPoint 15 Colors
 
-Однофайловый установщик COM-надстройки PowerPoint с фирменной палитрой из 15 цветов.
+Однофайловый установщик управляемой COM-надстройки PowerPoint с фирменной палитрой из 15 цветов.
 
-Разработка ведётся в отдельной ветке `powerpoint-palette-addin`.
+## Что устанавливается
+
+- вкладка `ПАЛИТРА` в ленте PowerPoint;
+- 15 цветов в разделах `Основные`, `Дополнительные`, `Статусные`;
+- команды `ЗАЛИВКА`, `ТЕКСТ`, `КОНТУР`;
+- автоматическая загрузка при каждом запуске PowerPoint;
+- подробные установочный и рабочий логи.
+
+## Технология
+
+C# / .NET Framework 4.8, `IDTExtensibility2`, `IRibbonExtensibility`, RibbonX и системная регистрация через `RegAsm`. VBA, PPAM, VSTO и `AccessVBOM` не используются.
+
+## Разработка
+
+Рабочая ветка: `powerpoint-palette-addin`.
+
+Документы:
+
+- `docs/TECH_SPEC.md`;
+- `docs/ARCHITECTURE.md`;
+- `docs/TEST_PLAN.md`.
+
+Сборка GitHub Actions публикует один файл `PowerPoint_15_Colors_Setup.exe` и проверяет self-test и COM-метаданные RegAsm.
