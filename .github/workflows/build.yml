@@ -1,0 +1,73 @@
+name: Build PowerPoint 15 Colors
+
+on:
+  push:
+    branches:
+      - powerpoint-palette-addin
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore src/PowerPointPalette/PowerPointPalette.csproj
+
+      - name: Build Release
+        run: dotnet build src/PowerPointPalette/PowerPointPalette.csproj --configuration Release --no-restore
+
+      - name: Run deterministic self-test
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'src/PowerPointPalette/bin/Release/net48/PowerPoint_15_Colors_Setup.exe'
+          if (-not (Test-Path $exe)) { throw "EXE not found: $exe" }
+          & $exe --self-test
+          if ($LASTEXITCODE -ne 0) {
+            $desktopLog = Join-Path ([Environment]::GetFolderPath('Desktop')) 'PowerPoint_15_Colors_INSTALL_LOG.txt'
+            if (Test-Path $desktopLog) { Get-Content $desktopLog }
+            throw "Self-test failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Verify RegAsm COM metadata
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'src/PowerPointPalette/bin/Release/net48/PowerPoint_15_Colors_Setup.exe'
+          $regAsm = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/RegAsm.exe'
+          $regFile = Join-Path $env:RUNNER_TEMP 'PowerPointPalette.reg'
+          & $regAsm $exe /nologo /regfile:$regFile
+          if ($LASTEXITCODE -ne 0) { throw "RegAsm metadata generation failed: $LASTEXITCODE" }
+          $registration = Get-Content $regFile -Raw
+          if ($registration -notmatch 'C70E01E0-54E7-4B34-8E33-1DA1471BCF6E') { throw 'CLSID missing from RegAsm output' }
+          if ($registration -notmatch 'DOMRF.PowerPointPalette') { throw 'ProgID missing from RegAsm output' }
+
+      - name: Prepare single-file artifact
+        shell: pwsh
+        run: |
+          $source = Join-Path $PWD 'src/PowerPointPalette/bin/Release/net48/PowerPoint_15_Colors_Setup.exe'
+          $artifactDir = Join-Path $PWD 'artifacts'
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+          Copy-Item $source (Join-Path $artifactDir 'PowerPoint_15_Colors_Setup.exe') -Force
+          $hash = (Get-FileHash (Join-Path $artifactDir 'PowerPoint_15_Colors_Setup.exe') -Algorithm SHA256).Hash
+          Set-Content -Path (Join-Path $artifactDir 'SHA256.txt') -Value $hash -Encoding ascii
+          Get-ChildItem $artifactDir | Format-Table Name, Length
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PowerPoint_15_Colors_Setup
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
