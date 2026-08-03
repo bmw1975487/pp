@@ -50,11 +50,13 @@ jobs:
           $exe = Join-Path $PWD 'src/PowerPointPalette/bin/Release/net48/PowerPoint_15_Colors_Setup.exe'
           $regAsm = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/RegAsm.exe'
           $regFile = Join-Path $env:RUNNER_TEMP 'PowerPointPalette.reg'
-          & $regAsm $exe /nologo /regfile:$regFile
+          & $regAsm $exe /nologo /codebase /regfile:$regFile
           if ($LASTEXITCODE -ne 0) { throw "RegAsm metadata generation failed: $LASTEXITCODE" }
           $registration = Get-Content $regFile -Raw
           if ($registration -notmatch 'C70E01E0-54E7-4B34-8E33-1DA1471BCF6E') { throw 'CLSID missing from RegAsm output' }
           if ($registration -notmatch 'DOMRF.PowerPointPalette') { throw 'ProgID missing from RegAsm output' }
+          if ($registration -notmatch '"CodeBase"=') { throw 'CodeBase missing from RegAsm output' }
+          if ($registration -notmatch 'PowerPoint_15_Colors_Setup.exe') { throw 'Installed EXE name missing from RegAsm CodeBase output' }
           Write-Host $registration
 
       - name: Prepare single-file artifact
