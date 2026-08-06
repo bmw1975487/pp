@@ -1,0 +1,43 @@
+name: Import temporary Nika build 78 package
+
+on:
+  push:
+    branches:
+      - tmp-nika-build78-patch
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout temporary branch
+        uses: actions/checkout@v4
+        with:
+          ref: tmp-nika-build78-patch
+
+      - name: Download and verify non-secret CI package
+        run: |
+          set -euo pipefail
+          URL='https://tmpfiles.org/dl/wQwlFwK3Eflc/nika_3_0_10_unsigned_delivery.tgz'
+          curl --fail --location --silent --show-error --retry 5 --retry-delay 3 \
+            "$URL" -o "$RUNNER_TEMP/nika-delivery.tgz"
+          echo 'b3d2d4297bba99ab54da8ad60e7c5b1b2374669047ec283d91634bf7786fcdff  '"$RUNNER_TEMP/nika-delivery.tgz" | sha256sum -c -
+          rm -rf nika-build78-transfer
+          mkdir -p nika-build78-transfer
+          tar -xzf "$RUNNER_TEMP/nika-delivery.tgz" -C nika-build78-transfer --strip-components=1
+          find nika-build78-transfer -type f -print0 | sort -z | xargs -0 sha256sum > nika-build78-transfer/IMPORTED_SHA256SUMS.txt
+          test -s nika-build78-transfer/Nika_v3.0.10_UNSIGNED_ALIGNED.apk
+          test -s nika-build78-transfer/Nika_v3.0.10_source_CI.zip
+
+      - name: Commit temporary non-secret package
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add nika-build78-transfer
+          git commit -m 'temporary: import unsigned Nika 3.0.10 CI package'
+          git push origin HEAD:tmp-nika-build78-patch
