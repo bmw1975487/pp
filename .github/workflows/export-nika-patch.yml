@@ -1,0 +1,34 @@
+name: Export Nika build 78 patch
+
+on:
+  push:
+    branches:
+      - tmp-nika-build78-patch
+    paths:
+      - .github/workflows/export-nika-patch.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-nika-build78-patch
+      - name: Verify patch
+        run: |
+          set -euo pipefail
+          FILE='nika-build78-transfer/NIKA_3_0_10_FROM_BUILD77.patch.tgz'
+          echo '9d917cdde3ed1596775ccb4ec07c8074a09ff1f23f99fc2618a7e4976017f909  '"$FILE" | sha256sum -c -
+          tar -tzf "$FILE" | grep -q 'nika-patch/manifest.json'
+      - name: Upload patch
+        uses: actions/upload-artifact@v4
+        with:
+          name: nika-build78-patch
+          path: nika-build78-transfer/NIKA_3_0_10_FROM_BUILD77.patch.tgz
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
