@@ -1,0 +1,36 @@
+name: Export APK tools artifact
+
+on:
+  push:
+    branches:
+      - tmp-nika-build78-patch
+    paths:
+      - .github/workflows/export-apk-tools.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-tools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download verified tools package
+        run: |
+          set -euo pipefail
+          URL='https://litter.catbox.moe/m2ag9j.tgz'
+          OUT="$RUNNER_TEMP/nika-apk-tools.tgz"
+          curl --fail --location --silent --show-error --retry 5 --retry-delay 3 "$URL" -o "$OUT"
+          echo 'c9b2914232b966bc26fd1a90fe048b982e38976c9107c45ff9f263b12adb10fc  '"$OUT" | sha256sum -c -
+          tar -xzf "$OUT" -C "$RUNNER_TEMP"
+          test -x "$RUNNER_TEMP/apk-tools/aapt2"
+          test -x "$RUNNER_TEMP/apk-tools/zipalign"
+      - name: Upload tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: nika-apk-tools
+          path: ${{ runner.temp }}/apk-tools
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
