@@ -1,0 +1,1 @@
+9d917cdde3ed1596775ccb4ec07c8074a09ff1f23f99fc2618a7e4976017f909  nika-build78-transfer/NIKA_3_0_10_FROM_BUILD77.patch.tgz
