@@ -23,8 +23,6 @@ jobs:
           OUT="$RUNNER_TEMP/NIKA_3_0_10_UNSIGNED_APK.tgz"
           curl --fail --location --silent --show-error --retry 5 --retry-delay 3 "$URL" -o "$OUT"
           echo 'cc2bc6194c8ab0b566730502664acaa9744fc1dd2481995c921dda776b6a4f64  '"$OUT" | sha256sum -c -
-          tar -tzf "$OUT" > "$RUNNER_TEMP/package-list.txt"
-          grep -q 'nika-unsigned/Nika_v3.0.10_UNSIGNED_ALIGNED.apk' "$RUNNER_TEMP/package-list.txt"
           mkdir -p "$RUNNER_TEMP/check"
           tar -xzf "$OUT" -C "$RUNNER_TEMP/check"
           test -s "$RUNNER_TEMP/check/nika-unsigned/Nika_v3.0.10_UNSIGNED_ALIGNED.apk"
