@@ -1,0 +1,39 @@
+name: Export Nika unsigned build 78
+
+on:
+  push:
+    branches:
+      - tmp-nika-build78-patch
+    paths:
+      - .github/workflows/export-nika-unsigned.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-unsigned:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download verified non-secret package
+        run: |
+          set -euo pipefail
+          URL='https://litter.catbox.moe/j1m3qa.tgz'
+          OUT="$RUNNER_TEMP/NIKA_3_0_10_UNSIGNED_APK.tgz"
+          curl --fail --location --silent --show-error --retry 5 --retry-delay 3 "$URL" -o "$OUT"
+          echo 'cc2bc6194c8ab0b566730502664acaa9744fc1dd2481995c921dda776b6a4f64  '"$OUT" | sha256sum -c -
+          tar -tzf "$OUT" | grep -q 'nika-unsigned/Nika_v3.0.10_UNSIGNED_ALIGNED.apk'
+          mkdir -p "$RUNNER_TEMP/check"
+          tar -xzf "$OUT" -C "$RUNNER_TEMP/check"
+          test -s "$RUNNER_TEMP/check/nika-unsigned/Nika_v3.0.10_UNSIGNED_ALIGNED.apk"
+          test -s "$RUNNER_TEMP/check/nika-unsigned/apksigner.jar"
+          unzip -tq "$RUNNER_TEMP/check/nika-unsigned/Nika_v3.0.10_UNSIGNED_ALIGNED.apk"
+      - name: Upload unsigned package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nika-build78-unsigned-package
+          path: ${{ runner.temp }}/NIKA_3_0_10_UNSIGNED_APK.tgz
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
