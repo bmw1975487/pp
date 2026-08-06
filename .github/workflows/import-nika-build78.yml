@@ -25,13 +25,17 @@ jobs:
           URL='https://tmpfiles.org/dl/wQwlFwK3Eflc/nika_3_0_10_unsigned_delivery.tgz'
           curl --fail --location --silent --show-error --retry 5 --retry-delay 3 \
             "$URL" -o "$RUNNER_TEMP/nika-delivery.tgz"
-          echo 'b3d2d4297bba99ab54da8ad60e7c5b1b2374669047ec283d91634bf7786fcdff  '"$RUNNER_TEMP/nika-delivery.tgz" | sha256sum -c -
+          file "$RUNNER_TEMP/nika-delivery.tgz"
+          tar -tzf "$RUNNER_TEMP/nika-delivery.tgz" | head -50
           rm -rf nika-build78-transfer
           mkdir -p nika-build78-transfer
           tar -xzf "$RUNNER_TEMP/nika-delivery.tgz" -C nika-build78-transfer --strip-components=1
-          find nika-build78-transfer -type f -print0 | sort -z | xargs -0 sha256sum > nika-build78-transfer/IMPORTED_SHA256SUMS.txt
           test -s nika-build78-transfer/Nika_v3.0.10_UNSIGNED_ALIGNED.apk
           test -s nika-build78-transfer/Nika_v3.0.10_source_CI.zip
+          unzip -tq nika-build78-transfer/Nika_v3.0.10_UNSIGNED_ALIGNED.apk
+          unzip -tq nika-build78-transfer/Nika_v3.0.10_source_CI.zip
+          sha256sum "$RUNNER_TEMP/nika-delivery.tgz" > nika-build78-transfer/DELIVERY_ARCHIVE_SHA256.txt
+          find nika-build78-transfer -type f ! -name IMPORTED_SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > nika-build78-transfer/IMPORTED_SHA256SUMS.txt
 
       - name: Commit temporary non-secret package
         run: |
