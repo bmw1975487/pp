@@ -1,47 +1,47 @@
-name: Import temporary Nika build 78 package
+name: Import temporary Nika build 78 patch
 
 on:
   push:
     branches:
       - tmp-nika-build78-patch
+    paths:
+      - .github/workflows/import-nika-build78.yml
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  import-package:
+  import-patch:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - name: Checkout temporary branch
         uses: actions/checkout@v4
         with:
           ref: tmp-nika-build78-patch
 
-      - name: Download and verify non-secret CI package
+      - name: Download and verify non-secret patch
         run: |
           set -euo pipefail
-          URL='https://tmpfiles.org/dl/wQwlFwK3Eflc/nika_3_0_10_unsigned_delivery.tgz'
-          curl --fail --location --silent --show-error --retry 5 --retry-delay 3 \
-            "$URL" -o "$RUNNER_TEMP/nika-delivery.tgz"
-          file "$RUNNER_TEMP/nika-delivery.tgz"
-          tar -tzf "$RUNNER_TEMP/nika-delivery.tgz" | head -50
+          URL='https://temp.sh/cuqPk/NIKA_3_0_10_FROM_BUILD77.patch.tgz'
+          OUT='nika-build78-transfer/NIKA_3_0_10_FROM_BUILD77.patch.tgz'
           rm -rf nika-build78-transfer
           mkdir -p nika-build78-transfer
-          tar -xzf "$RUNNER_TEMP/nika-delivery.tgz" -C nika-build78-transfer --strip-components=1
-          test -s nika-build78-transfer/Nika_v3.0.10_UNSIGNED_ALIGNED.apk
-          test -s nika-build78-transfer/Nika_v3.0.10_source_CI.zip
-          unzip -tq nika-build78-transfer/Nika_v3.0.10_UNSIGNED_ALIGNED.apk
-          unzip -tq nika-build78-transfer/Nika_v3.0.10_source_CI.zip
-          sha256sum "$RUNNER_TEMP/nika-delivery.tgz" > nika-build78-transfer/DELIVERY_ARCHIVE_SHA256.txt
-          find nika-build78-transfer -type f ! -name IMPORTED_SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > nika-build78-transfer/IMPORTED_SHA256SUMS.txt
+          curl --fail --location --silent --show-error --retry 5 --retry-delay 3 "$URL" -o "$OUT"
+          echo '9d917cdde3ed1596775ccb4ec07c8074a09ff1f23f99fc2618a7e4976017f909  '"$OUT" | sha256sum -c -
+          tar -tzf "$OUT" | grep -q 'nika-patch/manifest.json'
+          mkdir -p "$RUNNER_TEMP/patch-check"
+          tar -xzf "$OUT" -C "$RUNNER_TEMP/patch-check"
+          python3 -m json.tool "$RUNNER_TEMP/patch-check/nika-patch/manifest.json" >/dev/null
+          sha256sum "$OUT" > nika-build78-transfer/SHA256SUMS.txt
 
-      - name: Commit temporary non-secret package
+      - name: Commit temporary patch
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add nika-build78-transfer
-          git commit -m 'temporary: import unsigned Nika 3.0.10 CI package'
+          git commit -m 'temporary: import verified Nika 3.0.10 patch'
           git push origin HEAD:tmp-nika-build78-patch
