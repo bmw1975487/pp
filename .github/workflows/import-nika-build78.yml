@@ -25,7 +25,7 @@ jobs:
       - name: Download and verify non-secret patch
         run: |
           set -euo pipefail
-          URL='https://temp.sh/cuqPk/NIKA_3_0_10_FROM_BUILD77.patch.tgz'
+          URL='https://litter.catbox.moe/82u5t2.tgz'
           OUT='nika-build78-transfer/NIKA_3_0_10_FROM_BUILD77.patch.tgz'
           rm -rf nika-build78-transfer
           mkdir -p nika-build78-transfer
