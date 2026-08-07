@@ -1,4 +1,4 @@
-name: Export Nika unsigned build 78 sort-safe
+name: Export Nika unsigned build 79 sort-safe
 
 on:
   push:
@@ -19,21 +19,22 @@ jobs:
       - name: Download verified non-secret package
         run: |
           set -euo pipefail
-          URL='https://n.uguu.se/qzcUVawO.tgz'
-          OUT="$RUNNER_TEMP/NIKA_3_0_10_UNSIGNED_SORT_SAFE.tgz"
+          URL='https://h.uguu.se/EtOYLgHJ.tgz'
+          OUT="$RUNNER_TEMP/NIKA_3_0_10_BUILD79_UNSIGNED_SORT_SAFE.tgz"
           curl --fail --location --silent --show-error --retry 5 --retry-delay 3 "$URL" -o "$OUT"
-          echo '1555f8ac4ffea2fc25bc4b398c23f762b3dc8e539d42c3216ee014572349fd60  '"$OUT" | sha256sum -c -
+          echo 'afad062cc5fb439823b77af2019c1cd92e9bf04cf8bd77be7d0d305bee225111  '"$OUT" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/check"
           tar -xzf "$OUT" -C "$RUNNER_TEMP/check"
           test -s "$RUNNER_TEMP/check/nika-unsigned/Nika_v3.0.10_UNSIGNED_ALIGNED.apk"
           test -s "$RUNNER_TEMP/check/nika-unsigned/apksigner.jar"
           test -x "$RUNNER_TEMP/check/nika-unsigned/zipalign"
+          test -x "$RUNNER_TEMP/check/nika-unsigned/aapt2"
           unzip -tq "$RUNNER_TEMP/check/nika-unsigned/Nika_v3.0.10_UNSIGNED_ALIGNED.apk"
       - name: Upload unsigned package
         uses: actions/upload-artifact@v4
         with:
-          name: nika-build78-unsigned-sort-safe
-          path: ${{ runner.temp }}/NIKA_3_0_10_UNSIGNED_SORT_SAFE.tgz
+          name: nika-build79-unsigned-sort-safe
+          path: ${{ runner.temp }}/NIKA_3_0_10_BUILD79_UNSIGNED_SORT_SAFE.tgz
           retention-days: 1
           compression-level: 0
           if-no-files-found: error
