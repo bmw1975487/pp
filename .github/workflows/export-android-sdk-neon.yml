@@ -131,7 +131,11 @@ jobs:
           class MainActivity : Activity()
           EOF
           cd /tmp/neon-deps
-          /opt/gradle-9.5.0/bin/gradle --no-daemon --stacktrace assembleDebug
+          /opt/gradle-9.5.0/bin/gradle --no-daemon --stacktrace \
+            :app:compileDebugKotlin \
+            :app:mergeExtDexDebug \
+            :app:mergeLibDexDebug \
+            :app:processDebugResources
 
       - name: Package toolchain
         shell: bash
