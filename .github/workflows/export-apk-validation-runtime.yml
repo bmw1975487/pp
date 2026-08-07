@@ -18,8 +18,9 @@ jobs:
           OUT="$RUNNER_TEMP/apk-validation-runtime.tgz"
           curl --fail --location --silent --show-error --retry 5 --retry-delay 3 "$URL" -o "$OUT"
           echo '0227d613f799e45ccbc910558e249e90839fbd0f8ae84be9f386c0b1c881be76  '"$OUT" | sha256sum -c -
-          tar -tzf "$OUT" | grep -q 'apk-validation-runtime/zipalign'
-          tar -tzf "$OUT" | grep -q 'apk-validation-runtime/lib64/'
+          tar -tzf "$OUT" > "$RUNNER_TEMP/runtime-list.txt"
+          grep -q 'apk-validation-runtime/zipalign' "$RUNNER_TEMP/runtime-list.txt"
+          grep -q 'apk-validation-runtime/lib64/' "$RUNNER_TEMP/runtime-list.txt"
       - name: Upload runtime
         uses: actions/upload-artifact@v4
         with:
