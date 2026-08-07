@@ -1,0 +1,29 @@
+name: Export APK validation runtime
+on:
+  push:
+    branches:
+      - tmp-nika-build78-patch
+    paths:
+      - .github/workflows/export-apk-validation-runtime.yml
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download and verify runtime
+        run: |
+          set -euo pipefail
+          URL='https://d.uguu.se/ugHDCLDp.tgz'
+          OUT="$RUNNER_TEMP/apk-validation-runtime.tgz"
+          curl --fail --location --silent --show-error --retry 5 --retry-delay 3 "$URL" -o "$OUT"
+          echo '0227d613f799e45ccbc910558e249e90839fbd0f8ae84be9f386c0b1c881be76  '"$OUT" | sha256sum -c -
+          tar -tzf "$OUT" | grep -q 'apk-validation-runtime/zipalign'
+          tar -tzf "$OUT" | grep -q 'apk-validation-runtime/lib64/'
+      - name: Upload runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: nika-apk-validation-runtime
+          path: ${{ runner.temp }}/apk-validation-runtime.tgz
+          retention-days: 1
+          compression-level: 0
