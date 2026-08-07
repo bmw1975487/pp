@@ -1,0 +1,33 @@
+name: Export Android 37 Platform for NEON
+
+on:
+  push:
+    branches:
+      - tools/android-sdk-export-neon
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-platform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+      - name: Install Android 37 platform
+        shell: bash
+        run: |
+          set -euxo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --channel=3 'platforms;android-37.0'
+          test -f "$ANDROID_HOME/platforms/android-37.0/android.jar"
+          tar -C "$ANDROID_HOME/platforms" -czf /tmp/android-37.0-full.tgz android-37.0
+          sha256sum /tmp/android-37.0-full.tgz
+      - name: Upload full platform
+        uses: actions/upload-artifact@v4
+        with:
+          name: neon-android-37-platform-full
+          path: /tmp/android-37.0-full.tgz
+          retention-days: 7
