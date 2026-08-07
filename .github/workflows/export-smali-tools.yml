@@ -1,0 +1,37 @@
+name: Export smali tools
+
+on:
+  push:
+    branches:
+      - tmp-nika-build78-patch
+    paths:
+      - .github/workflows/export-smali-tools.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download release tools
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 -o baksmali.jar https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar
+          curl -fL --retry 4 -o smali.jar https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat-release.jar
+          java -jar baksmali.jar --version
+          java -jar smali.jar --version
+          sha256sum baksmali.jar smali.jar > SHA256SUMS.txt
+      - name: Upload tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: smali-3.0.9-tools
+          path: |
+            baksmali.jar
+            smali.jar
+            SHA256SUMS.txt
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
