@@ -23,12 +23,32 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Install Android SDK components
+      - name: Locate and install Android SDK components
         shell: bash
         run: |
           set -euxo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager 'platforms;android-37' 'build-tools;37.0.0' 'platform-tools'
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK_ROOT" ]; then
+            echo "Android SDK root not found: $SDK_ROOT" >&2
+            exit 1
+          fi
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | head -n 1 || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$SDK_ROOT" -type f -name sdkmanager 2>/dev/null | head -n 1 || true)"
+          fi
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under $SDK_ROOT" >&2
+            find "$SDK_ROOT" -maxdepth 4 -type f | head -n 200
+            exit 1
+          fi
+          chmod +x "$SDKMANAGER" || true
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platforms;android-37' 'build-tools;37.0.0' 'platform-tools'
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          test -f "$SDK_ROOT/platforms/android-37/android.jar"
+          test -x "$SDK_ROOT/build-tools/37.0.0/aapt2"
+          test -x "$SDK_ROOT/build-tools/37.0.0/zipalign"
 
       - name: Prepare Gradle 9.5.0
         shell: bash
