@@ -1,0 +1,41 @@
+name: Export Android 36 jar
+
+on:
+  push:
+    branches:
+      - tmp-nika-build78-patch
+    paths:
+      - .github/workflows/export-android36-jar.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Android platform mirror
+        uses: actions/checkout@v4
+        with:
+          repository: Sable/android-platforms
+          ref: master
+          path: platforms
+          sparse-checkout: android-36/android.jar
+          sparse-checkout-cone-mode: false
+          fetch-depth: 1
+      - name: Verify jar
+        run: |
+          set -euo pipefail
+          test -s platforms/android-36/android.jar
+          unzip -tq platforms/android-36/android.jar
+          sha256sum platforms/android-36/android.jar
+      - name: Upload jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-36-platform-jar
+          path: platforms/android-36/android.jar
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
