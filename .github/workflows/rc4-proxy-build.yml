@@ -27,6 +27,12 @@ jobs:
           assert old in s
           s=s.replace('#include <string>','#include <string>\n#include <cstdio>').replace(old,new)
           p.write_text(s)
+          cm=Path('project/app/src/main/cpp/CMakeLists.txt')
+          c=cm.read_text()
+          Path('project/app/src/main/cpp/exports.map').write_text('{ global: JNI_OnLoad; local: *; };\n')
+          c += '\ntarget_link_options(rc4x PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports.map" -Wl,--exclude-libs,ALL -Wl,--build-id=none)\n'
+          c += 'target_link_options(gojni2 PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports.map" -Wl,--exclude-libs,ALL -Wl,--build-id=none)\n'
+          cm.write_text(c)
           PY
       - uses: actions/setup-java@v4
         with:
