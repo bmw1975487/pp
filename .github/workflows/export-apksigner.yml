@@ -1,0 +1,38 @@
+name: Export Android apksigner
+
+on:
+  push:
+    branches:
+      - tmp-nika-build78-patch
+    paths:
+      - .github/workflows/export-apksigner.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Collect apksigner
+        run: |
+          set -euo pipefail
+          BT="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          test -x "$BT/apksigner"
+          test -f "$BT/lib/apksigner.jar"
+          mkdir -p out/lib
+          cp "$BT/apksigner" out/apksigner
+          cp "$BT/lib/apksigner.jar" out/lib/apksigner.jar
+          chmod +x out/apksigner
+          sha256sum out/apksigner out/lib/apksigner.jar > out/SHA256SUMS.txt
+          out/apksigner --version
+      - name: Upload apksigner
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apksigner-tool
+          path: out
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
