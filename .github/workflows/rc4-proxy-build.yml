@@ -1,0 +1,44 @@
+name: RC4 generic proxy build
+
+on:
+  push:
+    branches: [rc4-proxy-builder]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore generic builder
+        run: |
+          mkdir project
+          base64 -d ci/rc4plugin.tar.gz.b64 > /tmp/p.tgz
+          tar -xzf /tmp/p.tgz -C project
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
+      - uses: android-actions/setup-android@v3
+      - name: Install toolchain
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;28.2.13676358" "cmake;3.22.1"
+      - name: Build
+        working-directory: project
+        run: gradle --no-daemon :app:assembleRelease --stacktrace
+      - name: Collect
+        run: |
+          mkdir out
+          cp project/app/build/outputs/apk/release/*.apk out/
+          find project/app/build/intermediates -type f \( -name 'librc4x.so' -o -name 'libgojni2.so' \) -exec cp '{}' out/ \; || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rc4-generic-proxy
+          path: out/
+          if-no-files-found: error
+          retention-days: 1
