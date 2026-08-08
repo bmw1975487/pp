@@ -18,6 +18,16 @@ jobs:
           tar -xzf /tmp/p.tgz -C project
           sed -i 's/compileSdk = 37/compileSdk = 36/' project/app/build.gradle.kts
           sed -i 's/buildToolsVersion = "37.0.0"/buildToolsVersion = "36.0.0"/' project/app/build.gradle.kts
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('project/app/src/main/cpp/gojni2.cpp')
+          s=p.read_text()
+          old='innerH=android_dlopen_ext("/proc/self/fd/x",RTLD_NOW|RTLD_LOCAL,&ext);close(fd);memset(plain.data(),0,plain.size());if(!innerH)return JNI_ERR;\n  auto f=(jint(*)(JavaVM*,void*))dlsym(innerH,"JNI_OnLoad");if(!f)return JNI_ERR;return f(vm,nullptr);'
+          new='char fdpath[64];snprintf(fdpath,sizeof(fdpath),"/proc/self/fd/%d",fd);innerH=android_dlopen_ext(fdpath,RTLD_NOW|RTLD_LOCAL,&ext);memset(plain.data(),0,plain.size());if(!innerH){close(fd);return JNI_ERR;}\n  auto f=(jint(*)(JavaVM*,void*))dlsym(innerH,"JNI_OnLoad");if(!f){close(fd);return JNI_ERR;}jint rr=f(vm,nullptr);close(fd);return rr;'
+          assert old in s
+          s=s.replace('#include <string>','#include <string>\n#include <cstdio>').replace(old,new)
+          p.write_text(s)
+          PY
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
