@@ -16,6 +16,8 @@ jobs:
           mkdir project
           base64 -d ci/rc4plugin.tar.gz.b64 > /tmp/p.tgz
           tar -xzf /tmp/p.tgz -C project
+          sed -i 's/compileSdk = 37/compileSdk = 36/' project/app/build.gradle.kts
+          sed -i 's/buildToolsVersion = "37.0.0"/buildToolsVersion = "36.0.0"/' project/app/build.gradle.kts
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
