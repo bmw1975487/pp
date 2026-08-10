@@ -1,0 +1,15 @@
+name: Tel builder test
+on:
+  push:
+    branches:
+      - agent/tel-rustore-builder
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo PUBLIC_ACTION_OK > action_ok.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: action-ok
+          path: action_ok.txt
