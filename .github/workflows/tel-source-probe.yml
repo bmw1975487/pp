@@ -1,0 +1,30 @@
+name: Tel source probe
+on:
+  push:
+    branches: [agent/tel-rustore-builder]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct private source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/tel
+          curl -fsSL 'https://raw.githubusercontent.com/bmw1975487/NIKA_PLATFORM_ANDROID/agent/tel-rustore-0.3.1/tel-rustore/chunks/00.b64?token=BMTL6IDF3BAU7YUT67GDQNTKPFOF3AA' -o /tmp/tel/00.b64
+          curl -fsSL 'https://raw.githubusercontent.com/bmw1975487/NIKA_PLATFORM_ANDROID/agent/tel-rustore-0.3.1/tel-rustore/chunks/01.b64?token=BMTL6IFP6FC3B7AQUUACS4LKPFOF3AA' -o /tmp/tel/01.b64
+          curl -fsSL 'https://raw.githubusercontent.com/bmw1975487/NIKA_PLATFORM_ANDROID/agent/tel-rustore-0.3.1/tel-rustore/chunks/02.b64?token=BMTL6IFJ3TXJ7N6ZXE7IV3TKPFOF3AA' -o /tmp/tel/02.b64
+          curl -fsSL 'https://raw.githubusercontent.com/bmw1975487/NIKA_PLATFORM_ANDROID/agent/tel-rustore-0.3.1/tel-rustore/chunks/03.b64?token=BMTL6IA4SEKXKKHK7YO4T3LKPFOF3AA' -o /tmp/tel/03.b64
+          printf '%s' 'RtYAEYYxFNYIZ3oSvQlHywTs5g2SeMJGEBW+BDKBxNuGWUE1E27hU/SjHCQhQkyNMazFEEYIZuBYTNswRAIlbLoVlA6wycEAFSIYZhIFBCh0NBI34SAXMDA7GFKQE7A6vqzQo36K4+f/+9o77p/75/65f+6f++f++cN8/icCUBNyAKgCAA==' > /tmp/tel/04.b64
+          cat /tmp/tel/0*.b64 | base64 -d > /tmp/tel/source.tar.gz
+          mkdir /tmp/tel/src
+          tar -xzf /tmp/tel/source.tar.gz -C /tmp/tel/src
+          find /tmp/tel/src -maxdepth 8 -type f | sort > source-files.txt
+          du -sh /tmp/tel/src >> source-files.txt
+          test -f /tmp/tel/src/app/build.gradle.kts
+          test -f /tmp/tel/src/app/src/main/java/com/bmw1975487/neonrelay/MainActivity.kt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tel-source-probe
+          path: source-files.txt
