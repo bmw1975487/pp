@@ -1,4 +1,4 @@
-name: AI Access One AutoTarget
+name: AI Access One BrowserOnly
 
 on:
   push:
@@ -39,22 +39,26 @@ jobs:
           git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
           git submodule update --init --recursive
 
-      - name: Apply BootstrapGate NoProfile AutoTarget patches
+      - name: Apply BrowserOnly patches
         run: |
           python3 ai-access-orbot/patch_orbot.py orbot-src ai-access-orbot/overlay
           python3 ai-access-orbot/patch_noprofile.py orbot-src
           python3 ai-access-orbot/patch_autotarget.py orbot-src
-          grep -n 'com.bmw1975487.aione.routefix6' orbot-src/app/build.gradle.kts
-          grep -n '0.2.6-autotarget' orbot-src/app/build.gradle.kts
-          grep -n 'CHATGPT_TARGET_DISCOVERED' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
-          grep -n 'CHATGPT_CANDIDATE' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
-          grep -n 'POWER_DEBOUNCED' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
-          grep -n 'TOR_STATUS_OFF_IGNORED' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          python3 ai-access-orbot/patch_browseronly.py orbot-src
+          grep -n 'com.bmw1975487.aione.routefix7' orbot-src/app/build.gradle.kts
+          grep -n '0.2.7-browseronly' orbot-src/app/build.gradle.kts
+          grep -n 'BROWSER_TARGET_READY' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'BROWSER_TARGET_MODE' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'CHATGPT_WEB_OPEN' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'https://chatgpt.com/' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
           grep -n 'AiAccessPrefs.targetPackage' orbot-src/app/src/main/java/org/torproject/android/service/vpn/OrbotVpnManager.java
           grep -n 'fullDeviceFallback=false dynamicTarget=true' orbot-src/app/src/main/java/org/torproject/android/service/vpn/OrbotVpnManager.java
+          grep -n 'POWER_DEBOUNCED' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'TOR_STATUS_OFF_IGNORED' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
           grep -n 'BOOTSTRAP_GATE_OPEN' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
           grep -n 'ROUTE_PROBE_BLOCKED' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
-          ! grep -n 'том же профиле Android' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          ! grep -n 'CHATGPT_TARGET_DISCOVERED' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          ! grep -n 'Клиент ChatGPT не найден' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
 
       - name: Build arm64 APK
         working-directory: orbot-src
@@ -65,21 +69,21 @@ jobs:
           APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | grep -E 'arm64|v8a' | head -1)
           if [ -z "$APK" ]; then APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | head -1); fi
           test -n "$APK"
-          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$APK" | tee ai-access-orbot/build-info-v026.txt
-          sha256sum "$APK" | tee ai-access-orbot/route-apk-v026.sha256
-          echo '--- native payload ---' | tee -a ai-access-orbot/build-info-v026.txt
-          unzip -l "$APK" | grep -E 'arm64-v8a|libtor|libhev|libgojni|lib.*proxy' | tee -a ai-access-orbot/build-info-v026.txt || true
-          echo '--- required feature markers ---' | tee -a ai-access-orbot/build-info-v026.txt
-          for DEX in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$DEX" | strings; done | grep -E '0.2.6-autotarget|CHATGPT_TARGET_DISCOVERED|CHATGPT_CANDIDATE|POWER_DEBOUNCED|TOR_STATUS_OFF_IGNORED|BOOTSTRAP_GATE_OPEN|ROUTE_PROBE_BLOCKED|LOG_SHARE_TELEGRAM|LOG_DOWNLOADS_SAVED' | head -100 | tee -a ai-access-orbot/build-info-v026.txt || true
-          cp "$APK" ai-access-orbot/AI_Access_One_v0.2.6_AUTOTARGET_arm64.apk
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$APK" | tee ai-access-orbot/build-info-v027.txt
+          sha256sum "$APK" | tee ai-access-orbot/route-apk-v027.sha256
+          echo '--- native payload ---' | tee -a ai-access-orbot/build-info-v027.txt
+          unzip -l "$APK" | grep -E 'arm64-v8a|libtor|libhev|libgojni|lib.*proxy' | tee -a ai-access-orbot/build-info-v027.txt || true
+          echo '--- required feature markers ---' | tee -a ai-access-orbot/build-info-v027.txt
+          for DEX in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$DEX" | strings; done | grep -E '0.2.7-browseronly|BROWSER_TARGET_READY|BROWSER_TARGET_MODE|BROWSER_TARGET_DEFAULT|CHATGPT_WEB_OPEN|https://chatgpt.com/|POWER_DEBOUNCED|TOR_STATUS_OFF_IGNORED|BOOTSTRAP_GATE_OPEN|ROUTE_PROBE_BLOCKED|LOG_SHARE_TELEGRAM|LOG_DOWNLOADS_SAVED' | head -120 | tee -a ai-access-orbot/build-info-v027.txt || true
+          cp "$APK" ai-access-orbot/AI_Access_One_v0.2.7_BROWSER_ONLY_arm64.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AI_Access_One_v0.2.6_AUTOTARGET_arm64
+          name: AI_Access_One_v0.2.7_BROWSER_ONLY_arm64
           path: |
-            ai-access-orbot/AI_Access_One_v0.2.6_AUTOTARGET_arm64.apk
-            ai-access-orbot/route-apk-v026.sha256
-            ai-access-orbot/build-info-v026.txt
+            ai-access-orbot/AI_Access_One_v0.2.7_BROWSER_ONLY_arm64.apk
+            ai-access-orbot/route-apk-v027.sha256
+            ai-access-orbot/build-info-v027.txt
           if-no-files-found: error
           retention-days: 7
