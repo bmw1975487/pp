@@ -39,14 +39,13 @@ jobs:
         run: |
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'platform-tools'
-          sdkmanager --list_installed
 
       - name: Build bootstrap APK
-        run: gradle --no-daemon --stacktrace :app:assembleBootstrapDebug
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
 
       - name: Verify APK
         run: |
-          APK=$(find app/build/outputs/apk/bootstrap/debug -name '*.apk' | head -1)
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' | head -1)
           test -n "$APK"
           echo "APK=$APK"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
@@ -57,7 +56,7 @@ jobs:
         with:
           name: AI_Access_One_v0.1.0_BOOTSTRAP
           path: |
-            ai-access-one/app/build/outputs/apk/bootstrap/debug/*.apk
+            ai-access-one/app/build/outputs/apk/debug/*.apk
             ai-access-one/bootstrap-apk.sha256
           if-no-files-found: error
           retention-days: 7
