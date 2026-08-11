@@ -12,18 +12,7 @@ import java.util.TimerTask
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
-/**
- * AI Access One hardened SmartConnect.
- *
- * Differences from upstream:
- *  - country is passed explicitly to AutoConf, enabling the GP DNSTT MOAT path;
- *  - cannotConnectWithoutPt=true for the RU test environment;
- *  - transport watchdog is authoritative: a transport that makes no bootstrap progress
- *    inside Prefs.smartConnectTimeout is abandoned;
- *  - bootstrap progress is reset on every transport switch;
- *  - fallback covers Snowflake, AMP, WebTunnel, DNSTT, MOAT custom bridges, obfs4 and direct;
- *  - every recovery decision is broadcast to the one-button UI/log.
- */
+/** AI Access One hardened SmartConnect with explicit RU MOAT and anti-stall rotation. */
 object SmartConnect {
     const val AI_ACTION = "org.torproject.android.ai.SMARTCONNECT"
     const val EXTRA_EVENT = "event"
@@ -70,27 +59,27 @@ object SmartConnect {
             val country = Prefs.bridgeCountry?.takeIf { it.isNotBlank() }
             var conf: Pair<Transport, List<String>>? = null
             try {
-                // Explicit country enables Guardian Project's DNSTT-backed MOAT endpoint.
-                // The third argument prevents AutoConf from treating direct Tor as acceptable
-                // in an environment where we already know direct access is unreliable.
                 conf = AutoConf.`do`(context, country, true)
                 notify("AUTOCONF_OK", "country=${country ?: "auto"} transport=${conf?.first?.id ?: "none"} bridges=${conf?.second?.size ?: 0}")
             } catch (t: Throwable) {
                 notify("AUTOCONF_FAIL", "${t.javaClass.simpleName}: ${t.message ?: ""}")
             }
 
-            conf?.second?.let {
-                if (it.isNotEmpty()) Prefs.bridgesList = it
-            }
-
+            conf?.second?.let { if (it.isNotEmpty()) Prefs.bridgesList = it }
             Prefs.transport = conf?.first ?: Transport.SNOWFLAKE
             attempted.add(Prefs.transport)
 
-            if (!startTransport(context, Prefs.transport)) {
-                if (!switchTransport(context, reconfigure, "initial transport start failed")) {
+            // Before Tor exists, rotate only the PT process itself; reconfigure() requires conn != null.
+            while (!startTransport(context, Prefs.transport)) {
+                val failed = Prefs.transport
+                val next = nextTransport() ?: run {
                     mainScope.launch { stopTor(Exception("Smart Connect: no transport could start")) }
                     return@launch
                 }
+                attempted.add(next)
+                Prefs.transport = next
+                progress = 0
+                notify("TRANSPORT_SWITCH", "${failed.id} -> ${next.id}; reason=PT start failed")
             }
 
             val exception = startTor()
@@ -128,36 +117,34 @@ object SmartConnect {
         }
     }
 
+    /** Called only after Tor/control connection exists. Keeps trying candidates until reconfigure succeeds. */
     private fun switchTransport(context: Context, reconfigure: () -> Boolean, reason: String): Boolean {
-        val previous = Prefs.transport
-        try { previous.stop() } catch (_: Throwable) {}
+        try { Prefs.transport.stop() } catch (_: Throwable) {}
 
         while (true) {
+            val previous = Prefs.transport
             val next = nextTransport() ?: return false
             attempted.add(next)
             Prefs.transport = next
 
-            // Critical: each transport starts with a fresh bootstrap progress budget.
+            // Critical upstream fix: every candidate gets a fresh bootstrap progress budget.
             progress = 0
             connectionAlive()
             notify("TRANSPORT_SWITCH", "${previous.id} -> ${next.id}; reason=$reason; attempted=${attempted.joinToString(",") { it.id }}")
 
             if (!startTransport(context, next)) continue
 
-            return try {
+            try {
                 if (reconfigure()) {
                     notify("TRANSPORT_ACTIVE", "transport=${next.id}")
-                    true
-                } else {
-                    notify("RECONFIGURE_FAIL", "transport=${next.id}")
-                    try { next.stop() } catch (_: Throwable) {}
-                    false
+                    return true
                 }
+                notify("RECONFIGURE_FAIL", "transport=${next.id}; trying next")
             } catch (t: Throwable) {
                 notify("RECONFIGURE_EXCEPTION", "transport=${next.id} ${t.javaClass.simpleName}: ${t.message ?: ""}")
-                try { next.stop() } catch (_: Throwable) {}
-                false
             }
+
+            try { next.stop() } catch (_: Throwable) {}
         }
     }
 
@@ -165,7 +152,7 @@ object SmartConnect {
         for (candidate in fallbackOrder) {
             if (attempted.contains(candidate)) continue
             if (candidate == Transport.CUSTOM && Prefs.bridgesList.isEmpty()) continue
-            // Snowflake SQS is intentionally excluded: upstream marks it unsupported.
+            // SQS is intentionally absent: upstream explicitly marks it unsupported.
             return candidate
         }
         return null
@@ -185,7 +172,7 @@ object SmartConnect {
     @JvmStatic
     fun updateProgress(newProgress: Int) {
         if (!Prefs.smartConnect) return
-
+        // Repeated identical values (the user's repeated 50%) do NOT extend the watchdog.
         if (newProgress != progress) {
             val old = progress
             progress = newProgress
