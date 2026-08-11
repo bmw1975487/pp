@@ -59,7 +59,7 @@ public final class MainActivity extends Activity {
         getWindow().setStatusBarColor(NAVY);
         getWindow().setNavigationBarColor(NAVY);
         AppLog.i(this, "ACTIVITY_CREATE",
-                "version=0.1.1-diag sdk=" + Build.VERSION.SDK_INT + " device=" + Build.MANUFACTURER + " " + Build.MODEL);
+                "version=0.1.2-diagfix sdk=" + Build.VERSION.SDK_INT + " device=" + Build.MANUFACTURER + " " + Build.MODEL);
         setContentView(buildUi());
         render();
         handler.post(poll);
