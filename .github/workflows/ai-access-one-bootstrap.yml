@@ -1,10 +1,10 @@
-name: AI Access One Bootstrap
+name: AI Access One Diagnostic
 
 on:
   push:
     branches: [ ai-access-build ]
     paths:
-      - 'ai-access-one/**'
+      - 'ai-access-one/BUILD_TRIGGER'
       - '.github/workflows/ai-access-one-bootstrap.yml'
   workflow_dispatch:
 
@@ -40,7 +40,7 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'platform-tools'
 
-      - name: Build bootstrap APK
+      - name: Build diagnostic APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
 
       - name: Verify APK
@@ -49,14 +49,14 @@ jobs:
           test -n "$APK"
           echo "APK=$APK"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
-          sha256sum "$APK" | tee bootstrap-apk.sha256
+          sha256sum "$APK" | tee diagnostic-apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AI_Access_One_v0.1.0_BOOTSTRAP
+          name: AI_Access_One_v0.1.1_DIAG
           path: |
             ai-access-one/app/build/outputs/apk/debug/*.apk
-            ai-access-one/bootstrap-apk.sha256
+            ai-access-one/diagnostic-apk.sha256
           if-no-files-found: error
           retention-days: 7
