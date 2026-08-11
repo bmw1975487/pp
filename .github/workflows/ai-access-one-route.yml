@@ -43,18 +43,18 @@ jobs:
       - name: Apply AI Access overlay
         run: |
           python3 ai-access-orbot/patch_orbot.py orbot-src ai-access-orbot/overlay
-          grep -n 'com.bmw1975487.aione.routefix3' orbot-src/app/build.gradle.kts
-          grep -n '0.2.3-logshare' orbot-src/app/build.gradle.kts
+          grep -n 'com.bmw1975487.aione.routefix4' orbot-src/app/build.gradle.kts
+          grep -n '0.2.4-bootstrapgate' orbot-src/app/build.gradle.kts
           grep -n 'AiAccessActivity' orbot-src/app/src/main/AndroidManifest.xml
           grep -n 'com.openai.chatgpt' orbot-src/app/src/main/AndroidManifest.xml
           grep -n 'org.telegram.messenger' orbot-src/app/src/main/AndroidManifest.xml
-          grep -n 'aiaccess.files' orbot-src/app/src/main/AndroidManifest.xml
-          grep -n 'country, true' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
-          grep -n 'BOOTSTRAP_STALL' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
-          grep -n 'TRANSPORT_SWITCH' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
+          grep -n 'Prefs.exitNodes = ""' orbot-src/app/src/main/java/org/torproject/android/AiAccessPrefs.kt
+          grep -n 'BOOTSTRAP_GATE_OPEN' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'ROUTE_PROBE_BLOCKED' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'TRANSPORT_EXHAUSTED' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
+          grep -n 'stopTorAsync(false)' orbot-src/app/src/main/java/org/torproject/android/service/OrbotService.java
           grep -n 'MediaStore.Downloads' orbot-src/app/src/main/java/org/torproject/android/LogDownloads.java
           grep -n 'ОТПРАВИТЬ ZIP В TELEGRAM' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
-          grep -n 'СОХРАНИТЬ ZIP В DOWNLOADS' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
 
       - name: Build arm64 route APK
         working-directory: orbot-src
@@ -71,15 +71,15 @@ jobs:
           echo '--- native payload ---' | tee -a ai-access-orbot/build-info.txt
           unzip -l "$APK" | grep -E 'arm64-v8a|libtor|libhev|libgojni|lib.*proxy' | tee -a ai-access-orbot/build-info.txt || true
           echo '--- feature markers ---' | tee -a ai-access-orbot/build-info.txt
-          for DEX in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$DEX" | strings; done | grep -E 'BOOTSTRAP_STALL|TRANSPORT_SWITCH|0.2.3-logshare|LOG_SHARE_TELEGRAM|LOG_DOWNLOADS_SAVED|MediaStore' | head -50 | tee -a ai-access-orbot/build-info.txt || true
-          cp "$APK" ai-access-orbot/AI_Access_One_v0.2.3_LOGSHARE_arm64.apk
+          for DEX in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$DEX" | strings; done | grep -E 'BOOTSTRAP_GATE_OPEN|ROUTE_PROBE_BLOCKED|TRANSPORT_EXHAUSTED|0.2.4-bootstrapgate|LOG_SHARE_TELEGRAM|LOG_DOWNLOADS_SAVED' | head -80 | tee -a ai-access-orbot/build-info.txt || true
+          cp "$APK" ai-access-orbot/AI_Access_One_v0.2.4_BOOTSTRAP_GATE_arm64.apk
 
       - name: Upload route APK
         uses: actions/upload-artifact@v4
         with:
-          name: AI_Access_One_v0.2.3_LOGSHARE_arm64
+          name: AI_Access_One_v0.2.4_BOOTSTRAP_GATE_arm64
           path: |
-            ai-access-orbot/AI_Access_One_v0.2.3_LOGSHARE_arm64.apk
+            ai-access-orbot/AI_Access_One_v0.2.4_BOOTSTRAP_GATE_arm64.apk
             ai-access-orbot/route-apk.sha256
             ai-access-orbot/build-info.txt
           if-no-files-found: error
