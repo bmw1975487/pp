@@ -69,10 +69,10 @@ object SmartConnect {
             Prefs.transport = conf?.first ?: Transport.SNOWFLAKE
             attempted.add(Prefs.transport)
 
-            // Before Tor exists, rotate only the PT process itself; reconfigure() requires conn != null.
             while (!startTransport(context, Prefs.transport)) {
                 val failed = Prefs.transport
                 val next = nextTransport() ?: run {
+                    notify("TRANSPORT_EXHAUSTED", "before Tor start; attempted=${attempted.joinToString(",") { it.id }}")
                     mainScope.launch { stopTor(Exception("Smart Connect: no transport could start")) }
                     return@launch
                 }
@@ -89,7 +89,7 @@ object SmartConnect {
             }
 
             connectionAlive()
-            notify("WATCHDOG_ARMED", "timeout=${Prefs.smartConnectTimeout}s transport=${Prefs.transport.id}")
+            notify("WATCHDOG_ARMED", "timeout=${stallSeconds()}s transport=${Prefs.transport.id}")
 
             connectionGuard = Timer("AiSmartConnectGuard", true)
             connectionGuard?.schedule(object : TimerTask() {
@@ -105,11 +105,12 @@ object SmartConnect {
                     if (TimeSource.Monotonic.markNow() < connectionTimeout) return
 
                     val old = Prefs.transport
-                    notify("BOOTSTRAP_STALL", "progress=$progress transport=${old.id}; rotating transport")
+                    notify("BOOTSTRAP_STALL", "progress=$progress transport=${old.id}; timeout=${stallSeconds()}s; rotating transport")
 
                     if (!switchTransport(context, reconfigure, "bootstrap stalled at $progress%")) {
                         stopConnectionGuard()
                         try { Prefs.transport.stop() } catch (_: Throwable) {}
+                        notify("TRANSPORT_EXHAUSTED", "bootstrap=$progress attempted=${attempted.joinToString(",") { it.id }}")
                         mainScope.launch { stopTor(Exception("Smart Connect exhausted transports at bootstrap $progress%")) }
                     }
                 }
@@ -127,7 +128,6 @@ object SmartConnect {
             attempted.add(next)
             Prefs.transport = next
 
-            // Critical upstream fix: every candidate gets a fresh bootstrap progress budget.
             progress = 0
             connectionAlive()
             notify("TRANSPORT_SWITCH", "${previous.id} -> ${next.id}; reason=$reason; attempted=${attempted.joinToString(",") { it.id }}")
@@ -152,7 +152,6 @@ object SmartConnect {
         for (candidate in fallbackOrder) {
             if (attempted.contains(candidate)) continue
             if (candidate == Transport.CUSTOM && Prefs.bridgesList.isEmpty()) continue
-            // SQS is intentionally absent: upstream explicitly marks it unsupported.
             return candidate
         }
         return null
@@ -172,12 +171,14 @@ object SmartConnect {
     @JvmStatic
     fun updateProgress(newProgress: Int) {
         if (!Prefs.smartConnect) return
-        // Repeated identical values (the user's repeated 50%) do NOT extend the watchdog.
-        if (newProgress != progress) {
+        // Never let stale/out-of-order bootstrap notices move progress backwards.
+        // After a transport switch progress is reset to 0, so the new transport can still
+        // report the current Tor phase (for example 30) and receive a fresh watchdog budget.
+        if (newProgress > progress) {
             val old = progress
             progress = newProgress
             connectionAlive()
-            notify("BOOTSTRAP_PROGRESS", "$old -> $newProgress transport=${Prefs.transport.id}")
+            notify("BOOTSTRAP_PROGRESS", "$old -> $newProgress transport=${Prefs.transport.id} timeout=${stallSeconds()}s")
         }
     }
 
@@ -187,8 +188,20 @@ object SmartConnect {
         stopConnectionGuard()
     }
 
+    /**
+     * Consensus and descriptor loading legitimately need longer than the first handshake.
+     * v0.2.3 used 15s for everything, which rotated transports while a valid bridge was
+     * still downloading the consensus. This remains bounded: no phase can wait forever.
+     */
+    private fun stallSeconds(): Int = when {
+        progress < 10 -> 20
+        progress < 25 -> 30
+        progress < 75 -> 50
+        else -> 35
+    }
+
     private fun connectionAlive() {
-        connectionTimeout = TimeSource.Monotonic.markNow() + Prefs.smartConnectTimeout.seconds
+        connectionTimeout = TimeSource.Monotonic.markNow() + stallSeconds().seconds
     }
 
     private fun stopConnectionGuard() {
