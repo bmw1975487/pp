@@ -12,7 +12,10 @@ object AiAccessPrefs {
         Prefs.putUseVpn(true)
         Prefs.torifiedApps = CHATGPT_PACKAGE
         Prefs.smartConnect = true
-        Prefs.smartConnectTimeout = 25
+        // v0.2.1: do not sit on a stalled bridge for minutes.
+        Prefs.smartConnectTimeout = 15
+        // The physical target network is Russia. Supplying the country explicitly also
+        // enables Guardian Project's DNSTT-backed MOAT control path in AutoConf.
         Prefs.bridgeCountry = "ru"
         Prefs.exitNodes = "{$exitCountry}"
     }
