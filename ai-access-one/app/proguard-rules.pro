@@ -1,0 +1,2 @@
+-keep class com.bmw1975487.aione.MainActivity { *; }
+-keep class com.bmw1975487.aione.vpn.AiVpnService { *; }

@@ -1,0 +1,8 @@
+package com.bmw1975487.aione.vpn
+import android.app.*; import android.content.Intent; import android.net.VpnService; import android.os.*; import com.bmw1975487.aione.MainActivity; import com.bmw1975487.aione.R; import com.bmw1975487.aione.core.*; import com.bmw1975487.aione.diag.AppLog
+class AiVpnService:VpnService(){ private var tun:ParcelFileDescriptor?=null
+ override fun onCreate(){super.onCreate();startForeground(101,n("Bootstrap VPN запущен"));try{tun=Builder().setSession("AI Access One Bootstrap").setMtu(1400).addAddress("10.250.0.1",30).addAllowedApplication(packageName).establish();if(tun==null)error("establish null");StateStore.set(this,AppConstants.STATE_READY,"PASS: Activity + VPN + TUN");AppLog.i(this,"BOOTSTRAP_READY","fd=${tun?.fd}")}catch(t:Throwable){StateStore.set(this,AppConstants.STATE_ERROR,"TUN: ${t.javaClass.simpleName}: ${t.message}");AppLog.e(this,"BOOTSTRAP_FAILED",t.message?:"",t)}}
+ override fun onStartCommand(i:Intent?,f:Int,s:Int)=START_NOT_STICKY
+ override fun onDestroy(){runCatching{tun?.close()};tun=null;StateStore.set(this,AppConstants.STATE_OFF,"Остановлено");super.onDestroy()}
+ private fun n(text:String):Notification{val id="aione_vpn";val nm=getSystemService(NotificationManager::class.java);if(Build.VERSION.SDK_INT>=26)nm.createNotificationChannel(NotificationChannel(id,"AI Access One",NotificationManager.IMPORTANCE_LOW));val pi=PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE);return Notification.Builder(this,id).setSmallIcon(R.drawable.ic_launcher).setContentTitle("AI Access One").setContentText(text).setContentIntent(pi).setOngoing(true).build()}
+}
