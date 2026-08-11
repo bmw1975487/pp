@@ -10,6 +10,7 @@ import android.os.SystemClock;
 
 import java.net.InetAddress;
 import java.net.URL;
+import java.net.URLConnection;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -32,11 +33,12 @@ public final class NetworkDiagnostics {
         long allStart = SystemClock.elapsedRealtime();
         AppLog.i(c, "DIAG_START", "network diagnostics requested");
         List<String> lines = new ArrayList<>();
+
+        Network network = null;
         try {
             ConnectivityManager cm = (ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);
             if (cm == null) throw new IllegalStateException("ConnectivityManager unavailable");
-
-            Network network = cm.getActiveNetwork();
+            network = cm.getActiveNetwork();
             if (network == null) throw new IllegalStateException("No active network");
 
             NetworkCapabilities caps = cm.getNetworkCapabilities(network);
@@ -45,10 +47,18 @@ public final class NetworkDiagnostics {
             boolean validated = caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
             String capLine = "Сеть: " + transport + ", internet=" + internet + ", validated=" + validated;
             lines.add(capLine);
-            AppLog.i(c, "DIAG_NETWORK", capLine);
+            AppLog.i(c, "DIAG_NETWORK_PASS", capLine);
+        } catch (Throwable t) {
+            String line = "Сеть Android: ERROR " + t.getClass().getSimpleName() + ": " + String.valueOf(t.getMessage());
+            lines.add(line);
+            AppLog.e(c, "DIAG_NETWORK_FAIL", line, t);
+        }
 
+        try {
             long dnsStart = SystemClock.elapsedRealtime();
-            InetAddress[] addresses = network.getAllByName("api.openai.com");
+            InetAddress[] addresses = network != null
+                    ? network.getAllByName("api.openai.com")
+                    : InetAddress.getAllByName("api.openai.com");
             long dnsMs = SystemClock.elapsedRealtime() - dnsStart;
             if (addresses.length == 0) throw new IllegalStateException("DNS returned zero addresses");
             StringBuilder ips = new StringBuilder();
@@ -59,18 +69,18 @@ public final class NetworkDiagnostics {
             String dnsLine = "DNS OpenAI: PASS " + dnsMs + " ms [" + ips + "]";
             lines.add(dnsLine);
             AppLog.i(c, "DIAG_DNS_PASS", dnsLine);
-
-            lines.add(probe(c, network, "OpenAI API", "https://api.openai.com/v1/models"));
-            lines.add(probe(c, network, "ChatGPT", "https://chatgpt.com/"));
-
-            long total = SystemClock.elapsedRealtime() - allStart;
-            lines.add("Итог: диагностика завершена за " + total + " ms");
-            AppLog.i(c, "DIAG_DONE", "durationMs=" + total);
         } catch (Throwable t) {
-            String msg = "Диагностика: ERROR " + t.getClass().getSimpleName() + ": " + String.valueOf(t.getMessage());
-            lines.add(msg);
-            AppLog.e(c, "DIAG_FAILED", msg, t);
+            String line = "DNS OpenAI: ERROR " + t.getClass().getSimpleName() + ": " + String.valueOf(t.getMessage());
+            lines.add(line);
+            AppLog.e(c, "DIAG_DNS_FAIL", line, t);
         }
+
+        lines.add(probe(c, network, "OpenAI API", "https://api.openai.com/v1/models"));
+        lines.add(probe(c, network, "ChatGPT", "https://chatgpt.com/"));
+
+        long total = SystemClock.elapsedRealtime() - allStart;
+        lines.add("Итог: диагностика завершена за " + total + " ms");
+        AppLog.i(c, "DIAG_DONE", "durationMs=" + total);
         return join(lines);
     }
 
@@ -78,12 +88,14 @@ public final class NetworkDiagnostics {
         long start = SystemClock.elapsedRealtime();
         HttpsURLConnection conn = null;
         try {
-            conn = (HttpsURLConnection) network.openConnection(new URL(url));
+            URL target = new URL(url);
+            URLConnection raw = network != null ? network.openConnection(target) : target.openConnection();
+            conn = (HttpsURLConnection) raw;
             conn.setConnectTimeout(7000);
             conn.setReadTimeout(7000);
             conn.setInstanceFollowRedirects(false);
             conn.setRequestMethod("GET");
-            conn.setRequestProperty("User-Agent", "AI-Access-One/0.1.1-diag Android");
+            conn.setRequestProperty("User-Agent", "AI-Access-One/0.1.2-diagfix Android");
             int code = conn.getResponseCode();
             long ms = SystemClock.elapsedRealtime() - start;
             String line = name + ": HTTP " + code + " за " + ms + " ms";
