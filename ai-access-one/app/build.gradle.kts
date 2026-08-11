@@ -1,7 +1,7 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
- namespace="com.bmw1975487.aione"; compileSdk=37
- defaultConfig { applicationId="com.bmw1975487.aione"; minSdk=26; targetSdk=37; versionCode=1; versionName="0.1.0" }
+ namespace="com.bmw1975487.aione"; compileSdk=36
+ defaultConfig { applicationId="com.bmw1975487.aione"; minSdk=26; targetSdk=36; versionCode=1; versionName="0.1.0" }
  flavorDimensions += "mode"
  productFlavors {
    create("bootstrap") { dimension="mode"; applicationIdSuffix=".bootstrap"; versionNameSuffix="-bootstrap"; buildConfigField("boolean","NETWORK_CORE_ENABLED","false") }
