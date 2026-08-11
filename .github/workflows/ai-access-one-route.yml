@@ -1,0 +1,75 @@
+name: AI Access One Route
+
+on:
+  push:
+    branches: [ ai-access-build ]
+    paths:
+      - 'ai-access-orbot/**'
+      - '.github/workflows/ai-access-one-route.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout overlay
+        uses: actions/checkout@v4
+
+      - name: Java 24
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '24'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android toolchain
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' 'platform-tools' 'ndk;29.0.14206865'
+
+      - name: Clone pinned Orbot source
+        run: |
+          git clone https://github.com/guardianproject/orbot-android.git orbot-src
+          cd orbot-src
+          git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+          git submodule update --init --recursive
+          git status --short
+
+      - name: Apply AI Access overlay
+        run: |
+          python3 ai-access-orbot/patch_orbot.py orbot-src ai-access-orbot/overlay
+          grep -n 'com.bmw1975487.aione.route' orbot-src/app/build.gradle.kts
+          grep -n 'AiAccessActivity' orbot-src/app/src/main/AndroidManifest.xml
+          grep -n 'com.openai.chatgpt' orbot-src/app/src/main/AndroidManifest.xml
+
+      - name: Build arm64 route APK
+        working-directory: orbot-src
+        run: ./gradlew --no-daemon --stacktrace assembleFullpermDebug
+
+      - name: Verify final APK
+        run: |
+          APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | grep -E 'arm64|v8a' | head -1)
+          if [ -z "$APK" ]; then APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | head -1); fi
+          test -n "$APK"
+          echo "APK=$APK" | tee ai-access-orbot/build-info.txt
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$APK" | tee -a ai-access-orbot/build-info.txt
+          sha256sum "$APK" | tee ai-access-orbot/route-apk.sha256
+          echo '--- native payload ---' | tee -a ai-access-orbot/build-info.txt
+          unzip -l "$APK" | grep -E 'arm64-v8a|libtor|libhev|libgojni|lib.*proxy' | tee -a ai-access-orbot/build-info.txt || true
+          cp "$APK" ai-access-orbot/AI_Access_One_v0.2.0_ORBOT_ROUTE_arm64.apk
+
+      - name: Upload route APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_Access_One_v0.2.0_ORBOT_ROUTE_arm64
+          path: |
+            ai-access-orbot/AI_Access_One_v0.2.0_ORBOT_ROUTE_arm64.apk
+            ai-access-orbot/route-apk.sha256
+            ai-access-orbot/build-info.txt
+          if-no-files-found: error
+          retention-days: 7
