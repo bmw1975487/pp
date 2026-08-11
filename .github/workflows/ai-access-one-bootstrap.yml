@@ -4,7 +4,7 @@ on:
   push:
     branches: [ ai-access-build ]
     paths:
-      - 'ai-access-one/BUILD_TRIGGER'
+      - 'ai-access-one/**'
       - '.github/workflows/ai-access-one-bootstrap.yml'
   workflow_dispatch:
 
@@ -54,7 +54,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AI_Access_One_v0.1.1_DIAG
+          name: AI_Access_One_v0.1.2_DIAGFIX
           path: |
             ai-access-one/app/build/outputs/apk/debug/*.apk
             ai-access-one/diagnostic-apk.sha256
