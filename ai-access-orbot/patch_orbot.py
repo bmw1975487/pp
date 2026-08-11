@@ -18,13 +18,13 @@ shutil.copy2(overlay / "SmartConnect.kt", smart_dst)
 # Pin our application identity/version and build arm64 only.
 gradle = app / "build.gradle.kts"
 s = gradle.read_text(encoding="utf-8")
-s = s.replace("val orbotBaseVersionCode = 1795300400", "val orbotBaseVersionCode = 203")
-s = s.replace('applicationId = namespace', 'applicationId = "com.bmw1975487.aione.routefix3"')
-s = s.replace('versionName = getVersionName().get()', 'versionName = "0.2.3-logshare"')
+s = s.replace("val orbotBaseVersionCode = 1795300400", "val orbotBaseVersionCode = 204")
+s = s.replace('applicationId = namespace', 'applicationId = "com.bmw1975487.aione.routefix4"')
+s = s.replace('versionName = getVersionName().get()', 'versionName = "0.2.4-bootstrapgate"')
 s = s.replace('applicationIdSuffix = ".debug"', '// AI Access: no debug suffix; separate applicationId already used')
 s = s.replace('include("x86", "armeabi-v7a", "x86_64", "arm64-v8a")', 'include("arm64-v8a")')
 s = s.replace('isUniversalApk = true', 'isUniversalApk = false')
-s = s.replace('archivesName.set("Orbot-${android.defaultConfig.versionName}")', 'archivesName.set("AI_Access_One_v0.2.3_LOGSHARE")')
+s = s.replace('archivesName.set("Orbot-${android.defaultConfig.versionName}")', 'archivesName.set("AI_Access_One_v0.2.4_BOOTSTRAP_GATE")')
 gradle.write_text(s, encoding="utf-8")
 
 manifest = app / "src/main/AndroidManifest.xml"
@@ -107,10 +107,10 @@ xml_dir.mkdir(parents=True, exist_ok=True)
 # Version label inside ZIP/device info.
 log_file = java_dir / "AiAccessLog.java"
 log_text = log_file.read_text(encoding="utf-8")
-log_text = log_text.replace('public static final String VERSION = "0.2.1-autorecovery";', 'public static final String VERSION = "0.2.3-logshare";')
+log_text = log_text.replace('public static final String VERSION = "0.2.1-autorecovery";', 'public static final String VERSION = "0.2.4-bootstrapgate";')
 log_file.write_text(log_text, encoding="utf-8")
 
-# Source-level edits to launcher: SmartConnect events + MAX/Telegram ZIP sharing + direct Downloads save.
+# Source-level edits to launcher: bootstrap gate + SmartConnect events + ZIP sharing.
 activity = java_dir / "AiAccessActivity.java"
 a = activity.read_text(encoding="utf-8")
 a = a.replace('import android.net.VpnService;', 'import android.net.Uri;\nimport android.net.VpnService;')
@@ -119,6 +119,7 @@ a = a.replace('import org.torproject.android.service.OrbotService;', 'import org
 a = a.replace('import org.torproject.jni.TorService;', 'import org.torproject.jni.TorService;\n\nimport java.io.File;')
 a = a.replace('private static final String MAX = "ru.oneme.app";', 'private static final String MAX = "ru.oneme.app";\n    private static final String[] TELEGRAM_PACKAGES = {"org.telegram.messenger", "org.telegram.messenger.web", "org.thunderdog.challegram"};\n    private static final String SMART_ACTION = SmartConnect.AI_ACTION;')
 a = a.replace('private Button powerButton, probeButton, shareButton;', 'private Button powerButton, probeButton, shareButton, telegramButton, saveButton;')
+a = a.replace('private int probeGeneration = 0;', 'private int probeGeneration = 0;\n    private boolean torBootstrapped = false;\n    private boolean routeProbeArmed = false;')
 a = a.replace('version=0.2.0-orbot-route', 'version=' + '" + AiAccessLog.VERSION + "')
 a = a.replace('f.addAction(OrbotConstants.LOCAL_ACTION_PORTS);', 'f.addAction(OrbotConstants.LOCAL_ACTION_PORTS);\n        f.addAction(SMART_ACTION);')
 
@@ -127,7 +128,12 @@ smart_branch = '''            } else if (SMART_ACTION.equals(action)) {
                 String event = intent.getStringExtra(SmartConnect.EXTRA_EVENT);
                 String smartDetail = intent.getStringExtra(SmartConnect.EXTRA_DETAIL);
                 AiAccessLog.i(AiAccessActivity.this, "SMARTCONNECT_" + String.valueOf(event), String.valueOf(smartDetail));
-                if ("BOOTSTRAP_STALL".equals(event) || "TRANSPORT_SWITCH".equals(event) || "AUTOCONF_OK".equals(event)) {
+                if ("BOOTSTRAP_COMPLETE".equals(event)) {
+                    onTorBootstrapped("SMARTCONNECT");
+                } else if ("TRANSPORT_EXHAUSTED".equals(event)) {
+                    state = "ERROR";
+                    detail = "Tor не смог пройти bootstrap · transport-пул исчерпан";
+                } else if ("BOOTSTRAP_STALL".equals(event) || "TRANSPORT_SWITCH".equals(event) || "AUTOCONF_OK".equals(event)) {
                     state = "CONNECTING";
                     detail = "AutoRecovery · " + String.valueOf(smartDetail);
                 }
@@ -135,6 +141,21 @@ smart_branch = '''            } else if (SMART_ACTION.equals(action)) {
 if ports_marker not in a:
     raise SystemExit("Activity ports marker not found")
 a = a.replace(ports_marker, smart_branch, 1)
+
+# Never probe merely because SOCKS ports exist: Orbot exposes them before bootstrap=100.
+a = a.replace('if (socksPort > 0) scheduleProbe(1800);', 'if (socksPort > 0) {\n                    if (torBootstrapped && routeProbeArmed) scheduleProbe(1500);\n                    else AiAccessLog.i(AiAccessActivity.this, "ROUTE_PROBE_GATE", "SOCKS ready; waiting for bootstrap=100");\n                }')
+
+old_status_on = '''                if (TorService.STATUS_ON.equals(status)) {
+                    state = "TOR_ON";
+                    detail = "Tor подключён · проверяю маршрут " + currentExit().toUpperCase();
+                    scheduleProbe(1400);
+                } else if (TorService.STATUS_OFF.equals(status)) {'''
+new_status_on = '''                if (TorService.STATUS_ON.equals(status)) {
+                    onTorBootstrapped("TOR_STATUS_ON");
+                } else if (TorService.STATUS_OFF.equals(status)) {'''
+if old_status_on not in a:
+    raise SystemExit("Activity TOR_STATUS_ON block not found")
+a = a.replace(old_status_on, new_status_on, 1)
 
 a = a.replace('shareButton = button("ОТПРАВИТЬ ЛОГ В MAX", CARD);', 'shareButton = button("ОТПРАВИТЬ ZIP В MAX", CARD);')
 share_add = '        root.addView(shareButton, lp(-1, 56, 0, 0, 0, 18));'
@@ -150,6 +171,73 @@ new_buttons = '''        root.addView(shareButton, lp(-1, 56, 0, 0, 0, 9));
 if share_add not in a:
     raise SystemExit("Activity share button marker not found")
 a = a.replace(share_add, new_buttons, 1)
+
+# Hard safety gate: if official ChatGPT is not installed in this Android profile,
+# do not start Orbot VPN. Otherwise upstream per-app routing can fall back to other apps.
+power_marker = '''        exitIndex = 0;
+        probeGeneration++;
+        AiAccessPrefs.configure(this, currentExit());'''
+power_guard = '''        try {
+            getPackageManager().getPackageInfo(CHATGPT, 0);
+            AiAccessLog.i(this, "CHATGPT_TARGET_CONFIRMED", CHATGPT);
+        } catch (Throwable t) {
+            state = "ERROR";
+            detail = "Официальный ChatGPT не найден в этом профиле Android";
+            AiAccessLog.e(this, "CHATGPT_TARGET_REQUIRED", detail + " package=" + CHATGPT, t);
+            Toast.makeText(this, "Установите официальный ChatGPT в том же профиле Android.", Toast.LENGTH_LONG).show();
+            render();
+            return;
+        }
+        exitIndex = 0;
+        probeGeneration++;
+        torBootstrapped = false;
+        routeProbeArmed = false;
+        AiAccessPrefs.configure(this, currentExit());'''
+if power_marker not in a:
+    raise SystemExit("Activity power marker not found")
+a = a.replace(power_marker, power_guard, 1)
+
+# Reset bootstrap gate on each engine start/stop.
+a = a.replace('            state = "CONNECTING";\n            detail = "SmartConnect · exit " + currentExit().toUpperCase();', '            torBootstrapped = false;\n            routeProbeArmed = false;\n            state = "CONNECTING";\n            detail = "SmartConnect · сначала bootstrap 100%";')
+a = a.replace('        socksPort = -1;\n        render();', '        socksPort = -1;\n        torBootstrapped = false;\n        routeProbeArmed = false;\n        render();', 1)
+
+# Add bootstrap completion gate before scheduleProbe().
+schedule_marker = '    private void scheduleProbe(long delayMs) {'
+on_ready = '''    private void onTorBootstrapped(String source) {
+        if (torBootstrapped && routeProbeArmed) return;
+        torBootstrapped = true;
+        state = "TOR_ON";
+        detail = "Tor bootstrap 100% · готовлю выход " + currentExit().toUpperCase();
+        AiAccessLog.i(this, "BOOTSTRAP_GATE_OPEN", "source=" + source + " socks=" + socksPort + " exit=" + currentExit());
+        if (!routeProbeArmed) {
+            routeProbeArmed = true;
+            // Only now may CMD_SET_EXIT toggle DisableNetwork and build a country-specific circuit.
+            switchExit(currentExit());
+            scheduleProbe(9000);
+        }
+        render();
+    }
+
+'''
+if schedule_marker not in a:
+    raise SystemExit("Activity scheduleProbe marker not found")
+a = a.replace(schedule_marker, on_ready + schedule_marker, 1)
+
+# Manual/automatic probes are forbidden before Tor reaches 100%.
+probe_marker = '''    private void startProbe(boolean auto) {
+        if (probing) return;
+        if (socksPort <= 0) {'''
+probe_gate = '''    private void startProbe(boolean auto) {
+        if (probing) return;
+        if (!torBootstrapped) {
+            AiAccessLog.w(this, "ROUTE_PROBE_BLOCKED", "bootstrap<100; probe/exit switching forbidden");
+            if (!auto) Toast.makeText(this, "Сначала Tor должен дойти до 100%", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (socksPort <= 0) {'''
+if probe_marker not in a:
+    raise SystemExit("Activity startProbe marker not found")
+a = a.replace(probe_marker, probe_gate, 1)
 
 share_start = a.find('    private void shareLog() {')
 share_end = a.find('    private void fail(', share_start)
@@ -238,12 +326,37 @@ new_share = '''    private Uri createZipUri(File zip) {
 
 '''
 a = a[:share_start] + new_share + a[share_end:]
-a = a.replace('Движок: Tor/Orbot SmartConnect. Выходы тестируются автоматически.', 'Движок: Tor/Orbot AutoRecovery. ZIP-лог можно отправить в MAX/Telegram или сохранить напрямую в Download/AI Access One.')
+a = a.replace('Движок: Tor/Orbot SmartConnect. Выходы тестируются автоматически.', 'Движок: Tor/Orbot BootstrapGate. До 100% запрещены OpenAI-probe и смена exit. ZIP-лог: MAX/Telegram/Downloads.')
 activity.write_text(a, encoding="utf-8")
 
-print("AI Access v0.2.3 LogShare overlay applied")
+# Upstream callback previously only displayed an error when SmartConnect exhausted all
+# transports, leaving Tor alive in the background. Stop it for real so retries start clean.
+service = java_dir / "service/OrbotService.java"
+svc = service.read_text(encoding="utf-8")
+old_error = '''                    if (e != null) {
+                        logNotice(getString(R.string.unable_to_start_tor) + " " + e.getLocalizedMessage());
+                        stopTorOnError(e.getLocalizedMessage());
+                    } else {
+                        //     stopTorAsync(true);
+                    }
+'''
+new_error = '''                    if (e != null) {
+                        logNotice(getString(R.string.unable_to_start_tor) + " " + e.getLocalizedMessage());
+                        stopTorOnError(e.getLocalizedMessage());
+                        stopTorAsync(false);
+                    } else {
+                        // no-op
+                    }
+'''
+if old_error not in svc:
+    raise SystemExit("OrbotService SmartConnect error callback not found")
+svc = svc.replace(old_error, new_error, 1)
+service.write_text(svc, encoding="utf-8")
+
+print("AI Access v0.2.4 BootstrapGate overlay applied")
 print("Orbot source:", root)
-print("ApplicationId: com.bmw1975487.aione.routefix3")
+print("ApplicationId: com.bmw1975487.aione.routefix4")
 print("Target: com.openai.chatgpt")
-print("Recovery: RU MOAT + 15s anti-stall + multi-transport")
+print("Bootstrap gate: no probe/exit switch before 100%")
+print("Recovery: RU MOAT + adaptive watchdog + clean stop on exhaustion")
 print("Logs: ZIP to MAX + Telegram + direct Downloads MediaStore")
