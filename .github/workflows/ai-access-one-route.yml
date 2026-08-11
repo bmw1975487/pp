@@ -48,8 +48,9 @@ jobs:
           grep -n 'AiAccessActivity' orbot-src/app/src/main/AndroidManifest.xml
           grep -n 'com.openai.chatgpt' orbot-src/app/src/main/AndroidManifest.xml
           grep -n 'aiaccess.files' orbot-src/app/src/main/AndroidManifest.xml
-          grep -n 'AutoConf.*bridgeCountry' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
+          grep -n 'country, true' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
           grep -n 'BOOTSTRAP_STALL' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
+          grep -n 'TRANSPORT_SWITCH' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
 
       - name: Build arm64 route APK
         working-directory: orbot-src
