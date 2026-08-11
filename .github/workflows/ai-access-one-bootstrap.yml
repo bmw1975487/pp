@@ -35,10 +35,10 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK 37
+      - name: Install Android SDK 36
         run: |
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager 'platforms;android-37' 'build-tools;37.0.0' 'platform-tools'
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'platform-tools'
           sdkmanager --list_installed
 
       - name: Build bootstrap APK
@@ -49,7 +49,7 @@ jobs:
           APK=$(find app/build/outputs/apk/bootstrap/debug -name '*.apk' | head -1)
           test -n "$APK"
           echo "APK=$APK"
-          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$APK"
           sha256sum "$APK" | tee bootstrap-apk.sha256
 
       - name: Upload APK
