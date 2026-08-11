@@ -7,6 +7,7 @@ import android.util.Log;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -14,11 +15,14 @@ import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 public final class AiAccessLog {
+    public static final String VERSION = "0.2.1-autorecovery";
     private static final String TAG = "AI-ACCESS-ROUTE";
     private static final Object LOCK = new Object();
-    private static final int MAX_BYTES = 768 * 1024;
+    private static final int MAX_BYTES = 1024 * 1024;
     private static final String FILE = "ai-access-route.log";
     private static volatile String appState = "OFF";
     private static volatile String appDetail = "";
@@ -46,34 +50,91 @@ public final class AiAccessLog {
     }
 
     public static String tail(Context c, int maxChars) {
-        synchronized (LOCK) {
-            File f = file(c);
-            if (!f.exists()) return "Лог пока пуст.";
-            try (FileInputStream in = new FileInputStream(f);
-                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-                String s = out.toString(StandardCharsets.UTF_8.name());
-                if (s.length() > maxChars) s = s.substring(s.length() - maxChars);
-                return s;
-            } catch (Throwable t) {
-                return "Не удалось прочитать лог: " + t.getClass().getSimpleName() + ": " + safe(t.getMessage());
-            }
-        }
+        String s = readAll(c);
+        if (s.isEmpty()) return "Лог пока пуст.";
+        if (s.length() > maxChars) s = s.substring(s.length() - maxChars);
+        return s;
     }
 
     public static String sharePayload(Context c) {
+        return deviceInfo(c) + "\n" + readAll(c);
+    }
+
+    /** Creates one shareable diagnostic ZIP. No credentials, cookies or ChatGPT content are collected. */
+    public static File createZip(Context c) throws Exception {
+        synchronized (LOCK) {
+            File dir = new File(c.getCacheDir(), "ai-access-share");
+            if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Cannot create log share directory");
+            File[] old = dir.listFiles();
+            if (old != null) for (File f : old) if (f.isFile()) f.delete();
+
+            String stamp = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(new Date());
+            File out = new File(dir, "AI_Access_One_Log_" + stamp + ".zip");
+            String all = readAll(c);
+
+            StringBuilder tor = new StringBuilder();
+            StringBuilder route = new StringBuilder();
+            StringBuilder errors = new StringBuilder();
+            for (String line : all.split("\\n")) {
+                if (containsAny(line, "TOR_", "BOOTSTRAP", "SMARTCONNECT", "TRANSPORT_", "AUTOCONF", "known bridges")) tor.append(line).append('\n');
+                if (containsAny(line, "ROUTE_", "EXIT_", "OPENAI", "CHATGPT", "TRANSPORT_", "SMARTCONNECT", "BOOTSTRAP_")) route.append(line).append('\n');
+                if (containsAny(line, " [E] ", " [W] ", "FAIL", "ERROR", "REJECTED", "STALL", "EXHAUSTED")) errors.append(line).append('\n');
+            }
+
+            try (ZipOutputStream z = new ZipOutputStream(new FileOutputStream(out))) {
+                put(z, "01_MAIN_LOG.txt", deviceInfo(c) + "\n" + all);
+                put(z, "02_TOR_LOG.txt", tor.length() == 0 ? "No Tor-specific entries.\n" : tor.toString());
+                put(z, "03_ROUTE_STATUS.txt", "state=" + appState + "\ndetail=" + appDetail + "\n\n" + route);
+                put(z, "04_DEVICE.txt", deviceInfo(c));
+                put(z, "05_ERRORS.txt", errors.length() == 0 ? "No warnings/errors recorded.\n" : errors.toString());
+            }
+            i(c, "LOG_ZIP_READY", "file=" + out.getName() + " bytes=" + out.length());
+            return out;
+        }
+    }
+
+    private static String deviceInfo(Context c) {
         StringBuilder b = new StringBuilder();
         b.append("AI ACCESS ONE ROUTE LOG\n");
-        b.append("version=0.2.0-orbot-route\n");
+        b.append("version=").append(VERSION).append("\n");
         b.append("sdk=").append(Build.VERSION.SDK_INT).append("\n");
         b.append("device=").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append("\n");
         b.append("package=").append(c.getPackageName()).append("\n");
         b.append("state=").append(appState).append("\n");
-        b.append("detail=").append(appDetail).append("\n\n");
-        b.append(tail(c, 100_000));
+        b.append("detail=").append(appDetail).append("\n");
         return b.toString();
+    }
+
+    private static void put(ZipOutputStream z, String name, String text) throws Exception {
+        z.putNextEntry(new ZipEntry(name));
+        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+        z.write(bytes);
+        z.closeEntry();
+    }
+
+    private static boolean containsAny(String s, String... needles) {
+        for (String n : needles) if (s.contains(n)) return true;
+        return false;
+    }
+
+    private static String readAll(Context c) {
+        synchronized (LOCK) {
+            StringBuilder b = new StringBuilder();
+            appendFile(b, new File(c.getFilesDir(), FILE + ".old"));
+            appendFile(b, file(c));
+            return b.toString();
+        }
+    }
+
+    private static void appendFile(StringBuilder b, File f) {
+        if (!f.exists()) return;
+        try (FileInputStream in = new FileInputStream(f); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            b.append(out.toString(StandardCharsets.UTF_8.name()));
+            if (b.length() > 0 && b.charAt(b.length() - 1) != '\n') b.append('\n');
+        } catch (Throwable ignored) {}
     }
 
     private static void write(Context c, String level, String event, String detail, Throwable t) {
