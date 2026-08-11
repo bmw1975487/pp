@@ -65,7 +65,7 @@ public final class AppLog {
     public static String sharePayload(Context c) {
         StringBuilder b = new StringBuilder();
         b.append("AI ACCESS ONE DIAGNOSTIC LOG\n");
-        b.append("version=0.1.1-diag\n");
+        b.append("version=0.1.2-diagfix\n");
         b.append("sdk=").append(Build.VERSION.SDK_INT).append("\n");
         b.append("device=").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append("\n");
         b.append("state=").append(StateStore.state(c)).append("\n");
