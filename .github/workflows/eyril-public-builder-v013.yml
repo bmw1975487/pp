@@ -1,4 +1,4 @@
-name: Build EYRIL Godot shell v0.1.3
+name: Build EYRIL raw shell v0.1.3
 
 on:
   push:
@@ -21,17 +21,17 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Reassemble project
+      - name: Prepare shell project and raw placeholder assets
         shell: bash
         run: |
-          : > "$RUNNER_TEMP/EYRIL_PUBLIC_PLACEHOLDER.zip"
-          for f in eyril_build/chunks/b_*; do
-            base64 -d "$f" >> "$RUNNER_TEMP/EYRIL_PUBLIC_PLACEHOLDER.zip"
-          done
-          unzip -t "$RUNNER_TEMP/EYRIL_PUBLIC_PLACEHOLDER.zip"
           mkdir -p "$RUNNER_TEMP/eyril"
-          unzip -q "$RUNNER_TEMP/EYRIL_PUBLIC_PLACEHOLDER.zip" -d "$RUNNER_TEMP/eyril"
-          test -f "$RUNNER_TEMP/eyril/project.godot"
+          cp -a eyril_shell/. "$RUNNER_TEMP/eyril/"
+          mkdir -p "$RUNNER_TEMP/eyril/assets/raw"
+          PLACE='/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD52ooor3TiP//Z'
+          for n in main_splash S001 S002 S003 S004 S005 S006 S007 S008 S009 S010; do
+            printf '%s' "$PLACE" | base64 -d > "$RUNNER_TEMP/eyril/assets/raw/$n.dat"
+          done
+          file "$RUNNER_TEMP/eyril/assets/raw/main_splash.dat"
 
       - name: Install Godot 4.7.1 and export templates
         shell: bash
@@ -67,13 +67,13 @@ jobs:
         shell: bash
         run: |
           GODOT="$(cat "$RUNNER_TEMP/godot_path.txt")"
-          "$GODOT" --headless --editor --path "$RUNNER_TEMP/eyril" --quit-after 8
+          "$GODOT" --headless --editor --path "$RUNNER_TEMP/eyril" --quit-after 6
 
       - name: Runtime smoke test
         shell: bash
         run: |
           GODOT="$(cat "$RUNNER_TEMP/godot_path.txt")"
-          "$GODOT" --headless --path "$RUNNER_TEMP/eyril" --quit-after 4
+          "$GODOT" --headless --path "$RUNNER_TEMP/eyril" --quit-after 3
 
       - name: Export Android debug APK
         shell: bash
@@ -82,15 +82,27 @@ jobs:
           mkdir -p "$RUNNER_TEMP/eyril/build"
           "$GODOT" --headless --path "$RUNNER_TEMP/eyril" --export-debug "Android" "$RUNNER_TEMP/eyril/build/EYRIL_SHELL_v0.1.3.apk"
           test -s "$RUNNER_TEMP/eyril/build/EYRIL_SHELL_v0.1.3.apk"
+          unzip -l "$RUNNER_TEMP/eyril/build/EYRIL_SHELL_v0.1.3.apk" | grep -E 'assets/raw|sparsepck|AndroidManifest' || true
           sha256sum "$RUNNER_TEMP/eyril/build/EYRIL_SHELL_v0.1.3.apk" > "$RUNNER_TEMP/eyril/build/EYRIL_SHELL_v0.1.3.apk.sha256"
+
+      - name: Collect local APK signing tools
+        shell: bash
+        run: |
+          BT=$(ls -1d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          mkdir -p "$RUNNER_TEMP/sign_tools"
+          cp "$BT/zipalign" "$RUNNER_TEMP/sign_tools/"
+          cp "$BT/lib/apksigner.jar" "$RUNNER_TEMP/sign_tools/"
+          chmod +x "$RUNNER_TEMP/sign_tools/zipalign"
+          echo "build-tools=$(basename "$BT")" > "$RUNNER_TEMP/sign_tools/version.txt"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: EYRIL_SHELL_v0.1.3_APK
+          name: EYRIL_SHELL_v0.1.3_APK_AND_SIGNTOOLS
           path: |
             ${{ runner.temp }}/eyril/build/EYRIL_SHELL_v0.1.3.apk
             ${{ runner.temp }}/eyril/build/EYRIL_SHELL_v0.1.3.apk.sha256
+            ${{ runner.temp }}/sign_tools/zipalign
+            ${{ runner.temp }}/sign_tools/apksigner.jar
+            ${{ runner.temp }}/sign_tools/version.txt
           compression-level: 0
           retention-days: 1
-
-# rebuild after complete project chunks
