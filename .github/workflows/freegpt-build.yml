@@ -1,0 +1,94 @@
+name: FreeGPT Build
+
+on:
+  push:
+    branches: [ ai-access-build ]
+    paths:
+      - 'ai-access-one/FREEGPT_TRIGGER'
+      - 'ai-access-orbot/patch_freegpt.py'
+      - '.github/workflows/freegpt-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout overlay
+        uses: actions/checkout@v4
+
+      - name: Java 24
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '24'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android toolchain
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' 'platform-tools' 'ndk;29.0.14206865'
+
+      - name: Clone pinned Orbot source
+        run: |
+          git clone https://github.com/guardianproject/orbot-android.git orbot-src
+          cd orbot-src
+          git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+          git submodule update --init --recursive
+
+      - name: Apply proven route and FreeGPT product patches
+        run: |
+          python3 ai-access-orbot/patch_orbot.py orbot-src ai-access-orbot/overlay
+          python3 ai-access-orbot/patch_noprofile.py orbot-src
+          python3 ai-access-orbot/patch_autotarget.py orbot-src
+          python3 ai-access-orbot/patch_browseronly.py orbot-src
+          python3 ai-access-orbot/patch_twoscreen.py orbot-src
+          python3 ai-access-orbot/patch_freegpt.py orbot-src
+          grep -n 'com.freegpt.access' orbot-src/app/build.gradle.kts
+          grep -n '1.0.0-rc1' orbot-src/app/build.gradle.kts
+          grep -n 'buildWelcomeScreen' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'buildSelectScreen' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'buildSettingsScreen' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'buildProductsScreen' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'buildPayScreen' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'https://chatgpt.com/' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'https://claude.ai/' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'https://gemini.google.com/' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'https://grok.com/' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'TRIAL_MS' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'amount=300 RUB' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'Prefs.transport = remembered ?: Transport.SNOWFLAKE' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
+          grep -n 'fullDeviceFallback=false' orbot-src/app/src/main/java/org/torproject/android/service/vpn/OrbotVpnManager.java
+
+      - name: Build arm64 APK
+        working-directory: orbot-src
+        run: ./gradlew --no-daemon --stacktrace assembleFullpermDebug
+
+      - name: Verify APK
+        run: |
+          APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | grep -E 'arm64|v8a' | head -1)
+          if [ -z "$APK" ]; then APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | head -1); fi
+          test -n "$APK"
+          echo "APK=$APK" | tee ai-access-orbot/freegpt-build-info.txt
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$APK" | tee -a ai-access-orbot/freegpt-build-info.txt
+          sha256sum "$APK" | tee ai-access-orbot/freegpt.sha256
+          echo '--- native payload ---' | tee -a ai-access-orbot/freegpt-build-info.txt
+          unzip -l "$APK" | grep -E 'arm64-v8a|libtor|libhev|libgojni|lib.*proxy' | tee -a ai-access-orbot/freegpt-build-info.txt || true
+          echo '--- feature markers ---' | tee -a ai-access-orbot/freegpt-build-info.txt
+          for DEX in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$DEX" | strings; done | grep -E '1.0.0-rc1|AI_SERVICE_SELECTED|AI_WEB_OPEN|ChatGPT|Claude|Gemini|Grok|TRIAL_STATE|PAYMENT_REQUEST|TRANSPORT_PREFERRED|TRANSPORT_REMEMBERED' | head -160 | tee -a ai-access-orbot/freegpt-build-info.txt || true
+          cp "$APK" ai-access-orbot/FreeGPT.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeGPT
+          path: |
+            ai-access-orbot/FreeGPT.apk
+            ai-access-orbot/freegpt.sha256
+            ai-access-orbot/freegpt-build-info.txt
+          if-no-files-found: error
+          retention-days: 7
