@@ -24,7 +24,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/eyril"
-          base64 -d eyril_v020/source.b64 > "$RUNNER_TEMP/source.zip"
+          cat eyril_v020/chunks/c* > "$RUNNER_TEMP/source.b64"
+          test "$(wc -c < "$RUNNER_TEMP/source.b64")" -eq 20388
+          base64 -d "$RUNNER_TEMP/source.b64" > "$RUNNER_TEMP/source.zip"
           unzip -t "$RUNNER_TEMP/source.zip"
           unzip -q "$RUNNER_TEMP/source.zip" -d "$RUNNER_TEMP/eyril"
           test -f "$RUNNER_TEMP/eyril/project.godot"
