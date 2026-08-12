@@ -1,0 +1,34 @@
+name: Collect Android zipalign deps
+
+on:
+  push:
+    branches: [eyril-public-builder-v015]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect zipalign and runtime dependencies
+        shell: bash
+        run: |
+          BT=$(ls -1d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          mkdir -p "$RUNNER_TEMP/zipalign_bundle/lib"
+          cp "$BT/zipalign" "$RUNNER_TEMP/zipalign_bundle/"
+          chmod +x "$RUNNER_TEMP/zipalign_bundle/zipalign"
+          ldd "$BT/zipalign" | tee "$RUNNER_TEMP/zipalign_bundle/ldd.txt"
+          ldd "$BT/zipalign" | awk '/=> \/.* \(0x/ {print $3} /^\// {print $1}' | while read f; do
+            [ -f "$f" ] && cp -L "$f" "$RUNNER_TEMP/zipalign_bundle/lib/"
+          done
+          echo "$(basename "$BT")" > "$RUNNER_TEMP/zipalign_bundle/version.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zipalign-linux-bundle
+          path: ${{ runner.temp }}/zipalign_bundle
+          compression-level: 0
+          retention-days: 1
