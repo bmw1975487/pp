@@ -24,7 +24,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/eyril"
-          cat eyril_v024/chunks/c* > "$RUNNER_TEMP/source.b64"
+          cat eyril_v024/chunks/c00 eyril_v024/chunks/c00b eyril_v024/chunks/c01 eyril_v024/chunks/c02 eyril_v024/chunks/c03 eyril_v024/chunks/c04 > "$RUNNER_TEMP/source.b64"
+          echo "base64 bytes=$(wc -c < "$RUNNER_TEMP/source.b64")"
           test "$(wc -c < "$RUNNER_TEMP/source.b64")" -eq 51640
           base64 -d "$RUNNER_TEMP/source.b64" > "$RUNNER_TEMP/source.zip"
           ACTUAL=$(sha256sum "$RUNNER_TEMP/source.zip" | cut -d' ' -f1)
