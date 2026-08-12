@@ -1,0 +1,97 @@
+name: Export Working v0.2.7 Source
+
+on:
+  push:
+    branches: [ ai-access-build ]
+    paths:
+      - '.github/workflows/export-working-v027-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact working overlay commit
+        uses: actions/checkout@v4
+        with:
+          ref: 5f2188aaaee61a6201813cc26362e30570ad2cd1
+          path: source-overlay
+
+      - name: Clone exact pinned Orbot
+        run: |
+          git clone https://github.com/guardianproject/orbot-android.git orbot-src
+          cd orbot-src
+          git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+          git submodule update --init --recursive
+
+      - name: Apply exact working patch chain
+        run: |
+          python3 source-overlay/ai-access-orbot/patch_orbot.py orbot-src source-overlay/ai-access-orbot/overlay
+          python3 source-overlay/ai-access-orbot/patch_noprofile.py orbot-src
+          python3 source-overlay/ai-access-orbot/patch_autotarget.py orbot-src
+          python3 source-overlay/ai-access-orbot/patch_browseronly.py orbot-src
+          grep -n 'com.bmw1975487.aione.routefix7' orbot-src/app/build.gradle.kts
+          grep -n '0.2.7-browseronly' orbot-src/app/build.gradle.kts
+          grep -n 'BROWSER_TARGET_READY' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'CHATGPT_WEB_OPEN' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'https://chatgpt.com/' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'fullDeviceFallback=false' orbot-src/app/src/main/java/org/torproject/android/service/vpn/OrbotVpnManager.java
+
+      - name: Add reproducibility notes
+        run: |
+          cat > WORKING_SOURCE_README_RU.txt <<'EOF'
+          РАБОЧАЯ ВЕРСИЯ AI ACCESS ONE v0.2.7 BrowserOnly
+          ===============================================
+
+          Это точный исходный snapshot версии, после теста которой пользователь написал «ура».
+
+          Рабочий overlay commit:
+          5f2188aaaee61a6201813cc26362e30570ad2cd1
+
+          Pinned upstream Orbot commit:
+          521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+
+          ApplicationId:
+          com.bmw1975487.aione.routefix7
+
+          Version:
+          0.2.7-browseronly
+
+          Цель:
+          браузер, который открывает https://chatgpt.com/
+
+          Проверенный физический результат:
+          - Chrome определён автоматически
+          - Snowflake/Tor bootstrap = 100%
+          - OpenAI API HTTP 401 (ожидаемо без API key)
+          - chatgpt.com HTTP 200
+          - CHATGPT_WEB_OPEN сработал
+
+          Сборка:
+          ./gradlew assembleFullpermDebug
+
+          Содержимое архива:
+          1) orbot-src/ — уже пропатченный полный buildable source tree
+          2) source-overlay/ — точный overlay/patch snapshot из рабочего commit
+          3) WORKING_SOURCE_README_RU.txt — этот файл
+          EOF
+
+      - name: Package full source
+        run: |
+          rm -rf orbot-src/.git source-overlay/.git
+          zip -qr AI_Access_One_v0.2.7_WORKING_SOURCE.zip orbot-src source-overlay WORKING_SOURCE_README_RU.txt
+          sha256sum AI_Access_One_v0.2.7_WORKING_SOURCE.zip > AI_Access_One_v0.2.7_WORKING_SOURCE.sha256
+          ls -lh AI_Access_One_v0.2.7_WORKING_SOURCE.zip
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_Access_One_v0.2.7_WORKING_SOURCE
+          path: |
+            AI_Access_One_v0.2.7_WORKING_SOURCE.zip
+            AI_Access_One_v0.2.7_WORKING_SOURCE.sha256
+          if-no-files-found: error
+          retention-days: 7
