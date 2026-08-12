@@ -1,0 +1,33 @@
+name: Collect zipalign runtime
+
+on:
+  push:
+    branches: [eyril-zipalign-deps]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect zipalign and shared libraries
+        shell: bash
+        run: |
+          BT=$(ls -1d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          mkdir -p "$RUNNER_TEMP/zipalign_runtime"
+          cp "$BT/zipalign" "$RUNNER_TEMP/zipalign_runtime/"
+          ldd "$BT/zipalign" | tee "$RUNNER_TEMP/zipalign_runtime/ldd.txt"
+          while read -r lib; do
+            [ -f "$lib" ] && cp -L "$lib" "$RUNNER_TEMP/zipalign_runtime/"
+          done < <(ldd "$BT/zipalign" | awk '{for(i=1;i<=NF;i++) if($i ~ /^\//) print $i}' | sort -u)
+          chmod +x "$RUNNER_TEMP/zipalign_runtime/zipalign"
+          ls -lh "$RUNNER_TEMP/zipalign_runtime"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zipalign_runtime
+          path: ${{ runner.temp }}/zipalign_runtime/
+          compression-level: 0
+          retention-days: 1
