@@ -1,0 +1,72 @@
+name: FreeGPT Visual Hash Report
+
+on:
+  push:
+    branches: [ ai-access-build ]
+    paths:
+      - '.github/workflows/freegpt-visual-hash-report.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build hash report
+        shell: bash
+        run: |
+          set -u
+          declare -A E
+          E[00]=59bd1059df6fb8db08dbdf0dbbc62428fce8a631
+          E[01]=8404ae603353e45ced20dfd481c20dc401767b9d
+          E[02]=336d21dc3ff1964ec48bb2d48e63426c0215a380
+          E[03]=121b5e079b6af9289dab318ca032c8a45a4fa460
+          E[04]=4b4f3278064b913274f9b610010cefe523843cdc
+          E[05]=676d99f7aea03765ae7b8351c5564d17ab0f28ae
+          E[06]=dc55b8bf799162d145ba38416fcfd069d8b65143
+          E[07]=86b50a1750789b8f1d0bd03b30138a1def96ad3c
+          E[08]=6cb6dc11bbc39a874fb7524c111bfd151640e083
+          E[09]=cb510d335eb9b9cf26d412207af8ee62d72f96d2
+          E[10]=d8ca4e844e8952756a10f69f968214a76d1b0c6d
+          E[11]=68545292b70107ff3fc94ec189aac436d4e74c64
+          E[12]=2d990566fcd46df2133ce71cff6808410aa4545f
+          E[13]=ab5e43370052300b706b4f1ba77e5c15e5e9a053
+          E[14]=c6a2ea5215d1cbaaa938b18f6d172af7fdee83d9
+          E[15]=47bad9008fc9e74d59f8ccb445e60e75a6b6f695
+          REPORT=ai-access-one/FREEGPT_VISUAL_REPORT.txt
+          mkdir -p ai-access-one
+          : > "$REPORT"
+          : > /tmp/freegpt.b64
+          echo 'Expected ZIP SHA256: 723d55ec73f17bed3529ce66a00af7d0284c4ee3dd33c248e70afa44beb4d122' >> "$REPORT"
+          for N in $(seq -w 0 15); do
+            F="ai-access-orbot/assets_b64/part${N}.txt"
+            if [ ! -f "$F" ]; then
+              echo "part${N} MISSING expected=${E[$N]}" >> "$REPORT"
+              continue
+            fi
+            A=$(git hash-object "$F")
+            S=$(wc -c < "$F" | tr -d ' ')
+            if [ "$A" = "${E[$N]}" ]; then ST=OK; else ST=MISMATCH; fi
+            echo "part${N} $ST size=$S actual=$A expected=${E[$N]}" >> "$REPORT"
+            tr -d '\r\n ' < "$F" >> /tmp/freegpt.b64
+          done
+          if base64 -d /tmp/freegpt.b64 > /tmp/freegpt.zip 2>/tmp/decode.err; then
+            Z=$(sha256sum /tmp/freegpt.zip | awk '{print $1}')
+            echo "Actual ZIP SHA256: $Z" >> "$REPORT"
+            unzip -t /tmp/freegpt.zip >> "$REPORT" 2>&1 || true
+          else
+            echo 'BASE64_DECODE_FAIL' >> "$REPORT"
+            cat /tmp/decode.err >> "$REPORT"
+          fi
+          cat "$REPORT"
+      - name: Commit report
+        shell: bash
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add ai-access-one/FREEGPT_VISUAL_REPORT.txt
+          git commit -m 'Update FreeGPT visual hash report' || exit 0
+          git push
