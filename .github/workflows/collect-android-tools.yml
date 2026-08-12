@@ -1,0 +1,27 @@
+name: Collect Android tools
+on:
+  push:
+    branches: [collect-godot-local]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect minimal Android SDK tools
+        run: |
+          mkdir -p out/build-tools out/platform-tools
+          BT=$(ls -1d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          cp -a "$BT" out/build-tools/
+          cp "$ANDROID_HOME/platform-tools/adb" out/platform-tools/
+          cp "$ANDROID_HOME/platform-tools/fastboot" out/platform-tools/ || true
+          printf '%s\n' "$ANDROID_HOME" > out/original_sdk_path.txt
+          find out -maxdepth 4 -type f -printf '%p %s\n' | head -100
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-minimal-tools
+          path: out/
+          compression-level: 0
+          retention-days: 1
