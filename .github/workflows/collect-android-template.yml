@@ -1,0 +1,29 @@
+name: Collect Godot Android template
+on:
+  push:
+    branches: [collect-godot-local]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download export templates
+        run: |
+          curl -fL --retry 4 -o templates.tpz 'https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz'
+          mkdir tpl
+          unzip -q templates.tpz -d tpl
+          find tpl -maxdepth 3 -type f -printf '%p %s\n' | head -80
+          mkdir out
+          cp tpl/templates/android_debug.apk out/
+          cp tpl/templates/android_release.apk out/
+          cp tpl/templates/version.txt out/ || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: godot-4.7.1-android-templates
+          path: out/
+          compression-level: 0
+          retention-days: 1
