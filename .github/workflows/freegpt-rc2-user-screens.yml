@@ -31,11 +31,24 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' 'platform-tools' 'ndk;29.0.14206865'
 
-      - name: Verify exact supplied artwork files
+      - name: Reconstruct and verify exact supplied artwork
         run: |
+          cat freegpt-rc2/assets_b64/part00.txt \
+              freegpt-rc2/assets_b64/part01.txt \
+              freegpt-rc2/assets_b64/part02.txt \
+              freegpt-rc2/assets_b64/part03.txt \
+              freegpt-rc2/assets_b64/part04.txt \
+              freegpt-rc2/assets_b64/part05.txt \
+              freegpt-rc2/assets_b64/part06.txt \
+              freegpt-rc2/assets_b64/part07.txt \
+              freegpt-rc2/assets_b64/part08.txt \
+              freegpt-rc2/assets_b64/part09.txt \
+              freegpt-rc2/assets_b64/part10.txt > /tmp/freegpt_assets.b64
+          base64 -d /tmp/freegpt_assets.b64 > /tmp/freegpt_tiny.zip
+          echo '723d55ec73f17bed3529ce66a00af7d0284c4ee3dd33c248e70afa44beb4d122  /tmp/freegpt_tiny.zip' | sha256sum -c -
           rm -rf /tmp/freegpt_assets
           mkdir -p /tmp/freegpt_assets
-          unzip -q ai-access-orbot/freegpt_tiny_exact.zip -d /tmp/freegpt_assets
+          unzip -q /tmp/freegpt_tiny.zip -d /tmp/freegpt_assets
           echo '1187abe7d2d975be57f1e53a95439fd8cfad881d2e8455c64b0c7f9c2805ad7f  /tmp/freegpt_assets/01_welcome.webp' | sha256sum -c -
           echo 'b449eeb5e50ffc372ef202e5e07eb50360b484dd50ad9d7f41a87c4e8143716e  /tmp/freegpt_assets/02_select.webp' | sha256sum -c -
           echo '15385f13e4ca1873ce8ab60e6469ca1b29402b864430a762f84ff1d967ffc0d6  /tmp/freegpt_assets/03_settings.webp' | sha256sum -c -
