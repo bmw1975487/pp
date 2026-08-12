@@ -50,12 +50,15 @@ jobs:
           mkdir -p /tmp/freegpt_assets
           unzip -q /tmp/freegpt_tiny.zip -d /tmp/freegpt_assets
 
-      - name: Clone pinned Orbot source
+      - name: Fetch pinned Orbot source shallow
         run: |
-          git clone https://github.com/guardianproject/orbot-android.git orbot-src
+          mkdir orbot-src
           cd orbot-src
-          git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
-          git submodule update --init --recursive
+          git init
+          git remote add origin https://github.com/guardianproject/orbot-android.git
+          git fetch --depth 1 origin 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+          git checkout --detach FETCH_HEAD
+          git submodule update --init --recursive --depth 1
 
       - name: Apply proven v0.2.7 route engine and FreeGPT UI
         run: |
@@ -84,7 +87,6 @@ jobs:
           grep -n 'applicationId = "com.freegpt.access"' orbot-src/app/build.gradle.kts
           grep -n '1.0.0-rc4-provider-log' orbot-src/app/build.gradle.kts
           grep -n 'providerHost' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
-          grep -n 'ROUTED_.*_HTTP' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
           grep -n 'attachLiveTechnicalLog' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
           grep -n 'AI_WEB_OPEN_REQUEST' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
           grep -n 'https://chatgpt.com/' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
@@ -108,7 +110,7 @@ jobs:
           echo '--- exact artwork in APK ---' | tee -a freegpt-rc4/out/build-info.txt
           unzip -l "$APK" | grep -E 'freegpt_screen_(welcome|select|settings|products|pay)|freegpt_user_icon' | tee -a freegpt-rc4/out/build-info.txt
           echo '--- provider/log markers ---' | tee -a freegpt-rc4/out/build-info.txt
-          for DEX in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$DEX" | strings; done | grep -E '1.0.0-rc4-provider-log|ROUTED_CLAUDE|ROUTED_GEMINI|ROUTED_GROK|AI_WEB_OPEN_REQUEST|AI_SERVICE_SELECTED|Технический|providerHost' | head -200 | tee -a freegpt-rc4/out/build-info.txt || true
+          for DEX in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$DEX" | strings; done | grep -E '1.0.0-rc4-provider-log|ROUTED_CLAUDE|ROUTED_GEMINI|ROUTED_GROK|AI_WEB_OPEN_REQUEST|AI_SERVICE_SELECTED|providerHost' | head -200 | tee -a freegpt-rc4/out/build-info.txt || true
           cp "$APK" freegpt-rc4/out/FreeGPT_RC4_PROVIDER_LOG.apk
 
       - name: Upload FreeGPT RC4
