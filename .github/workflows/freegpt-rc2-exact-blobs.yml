@@ -1,0 +1,145 @@
+name: FreeGPT RC2 Exact Visual Blobs
+
+on:
+  push:
+    branches: [ ai-access-build ]
+    paths:
+      - '.github/workflows/freegpt-rc2-exact-blobs.yml'
+      - 'ai-access-one/FREEGPT_RC2_EXACT_TRIGGER'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore exact approved visual blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          declare -A E
+          E[00]=59bd1059df6fb8db08dbdf0dbbc62428fce8a631
+          E[01]=8404ae603353e45ced20dfd481c20dc401767b9d
+          E[02]=336d21dc3ff1964ec48bb2d48e63426c0215a380
+          E[03]=121b5e079b6af9289dab318ca032c8a45a4fa460
+          E[04]=4b4f3278064b913274f9b610010cefe523843cdc
+          E[05]=676d99f7aea03765ae7b8351c5564d17ab0f28ae
+          E[06]=dc55b8bf799162d145ba38416fcfd069d8b65143
+          E[07]=86b50a1750789b8f1d0bd03b30138a1def96ad3c
+          E[08]=6cb6dc11bbc39a874fb7524c111bfd151640e083
+          E[09]=cb510d335eb9b9cf26d412207af8ee62d72f96d2
+          E[10]=d8ca4e844e8952756a10f69f968214a76d1b0c6d
+          E[11]=68545292b70107ff3fc94ec189aac436d4e74c64
+          E[12]=2d990566fcd46df2133ce71cff6808410aa4545f
+          E[13]=ab5e43370052300b706b4f1ba77e5c15e5e9a053
+          E[14]=c6a2ea5215d1cbaaa938b18f6d172af7fdee83d9
+          E[15]=47bad9008fc9e74d59f8ccb445e60e75a6b6f695
+
+          mkdir -p ai-access-orbot/assets_exact
+          : > /tmp/freegpt_assets.b64
+          for N in $(seq -w 0 15); do
+            SHA=${E[$N]}
+            git cat-file -e "$SHA"
+            git cat-file blob "$SHA" > "ai-access-orbot/assets_exact/part${N}.txt"
+            ACTUAL=$(git hash-object "ai-access-orbot/assets_exact/part${N}.txt")
+            test "$ACTUAL" = "$SHA"
+            echo "part${N} EXACT blob=$ACTUAL size=$(wc -c < ai-access-orbot/assets_exact/part${N}.txt)"
+            tr -d '\r\n ' < "ai-access-orbot/assets_exact/part${N}.txt" >> /tmp/freegpt_assets.b64
+          done
+
+          base64 -d /tmp/freegpt_assets.b64 > /tmp/freegpt_assets.zip
+          echo '723d55ec73f17bed3529ce66a00af7d0284c4ee3dd33c248e70afa44beb4d122  /tmp/freegpt_assets.zip' | sha256sum -c -
+          unzip -t /tmp/freegpt_assets.zip
+          unzip -l /tmp/freegpt_assets.zip
+          for F in 01_welcome.webp 02_select.webp 03_settings.webp 04_products.webp 05_pay.webp ic_launcher.webp; do
+            unzip -Z1 /tmp/freegpt_assets.zip | grep -Fx "$F"
+          done
+          echo APPROVED_VISUAL_ARCHIVE_PASS
+
+      - name: Java 24
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '24'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android toolchain
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' 'platform-tools' 'ndk;29.0.14206865'
+
+      - name: Clone pinned Orbot source
+        run: |
+          git clone https://github.com/guardianproject/orbot-android.git orbot-src
+          cd orbot-src
+          git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+          git submodule update --init --recursive
+
+      - name: Apply working route and exact visual UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 ai-access-orbot/patch_orbot.py orbot-src ai-access-orbot/overlay
+          python3 ai-access-orbot/patch_noprofile.py orbot-src
+          python3 ai-access-orbot/patch_autotarget.py orbot-src
+          python3 ai-access-orbot/patch_browseronly.py orbot-src
+          python3 ai-access-orbot/patch_twoscreen.py orbot-src
+          python3 ai-access-orbot/patch_freegpt.py orbot-src
+          python3 ai-access-orbot/patch_freegpt_visuals.py orbot-src ai-access-orbot/assets_exact
+
+          grep -n 'com.freegpt.access' orbot-src/app/build.gradle.kts
+          grep -n '1.0.0-rc2' orbot-src/app/build.gradle.kts
+          grep -n 'visualScreen' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'positionHitbox' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'AI_SERVICE_PROBE_HTTP' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'https://chatgpt.com/' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'https://claude.ai/' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'https://gemini.google.com/' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'https://grok.com/' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'fullDeviceFallback=false' orbot-src/app/src/main/java/org/torproject/android/service/vpn/OrbotVpnManager.java
+
+          for F in freegpt_01_welcome.webp freegpt_02_select.webp freegpt_03_settings.webp freegpt_04_products.webp freegpt_05_pay.webp freegpt_icon.webp; do
+            test -s "orbot-src/app/src/main/res/drawable-nodpi/$F"
+          done
+
+      - name: Build arm64 APK
+        working-directory: orbot-src
+        run: ./gradlew --no-daemon --stacktrace assembleFullpermDebug
+
+      - name: Verify final APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | grep -E 'arm64|v8a' | head -1)
+          if [ -z "$APK" ]; then APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | head -1); fi
+          test -n "$APK"
+          echo "APK=$APK" | tee ai-access-orbot/freegpt-rc2-build-info.txt
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$APK" | tee -a ai-access-orbot/freegpt-rc2-build-info.txt
+          sha256sum "$APK" | tee ai-access-orbot/freegpt-rc2.sha256
+          echo '--- exact approved visual resources ---' | tee -a ai-access-orbot/freegpt-rc2-build-info.txt
+          unzip -l "$APK" | grep -E 'freegpt_01_welcome.webp|freegpt_02_select.webp|freegpt_03_settings.webp|freegpt_04_products.webp|freegpt_05_pay.webp|freegpt_icon.webp' | tee -a ai-access-orbot/freegpt-rc2-build-info.txt
+          echo '--- native payload ---' | tee -a ai-access-orbot/freegpt-rc2-build-info.txt
+          unzip -l "$APK" | grep -E 'arm64-v8a|libtor|libhev|libgojni|lib.*proxy' | tee -a ai-access-orbot/freegpt-rc2-build-info.txt || true
+          echo '--- feature markers ---' | tee -a ai-access-orbot/freegpt-rc2-build-info.txt
+          for DEX in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$DEX" | strings; done | grep -E '1.0.0-rc2|AI_SERVICE_SELECTED|AI_SERVICE_PROBE_HTTP|AI_WEB_OPEN|TRIAL_STATE|PAYMENT_REQUEST|TRANSPORT_PREFERRED|TRANSPORT_REMEMBERED' | head -180 | tee -a ai-access-orbot/freegpt-rc2-build-info.txt || true
+          cp "$APK" ai-access-orbot/FreeGPT_RC2_Approved_Visuals.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeGPT_RC2_Approved_Visuals
+          path: |
+            ai-access-orbot/FreeGPT_RC2_Approved_Visuals.apk
+            ai-access-orbot/freegpt-rc2.sha256
+            ai-access-orbot/freegpt-rc2-build-info.txt
+          if-no-files-found: error
+          retention-days: 7
