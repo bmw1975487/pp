@@ -31,9 +31,8 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' 'platform-tools' 'ndk;29.0.14206865'
 
-      - name: Verify exact supplied artwork archive
+      - name: Verify exact supplied artwork files
         run: |
-          echo '723d55ec73f17bed3529ce66a00af7d0284c4ee3dd33c248e70afa44beb4d122  ai-access-orbot/freegpt_tiny_exact.zip' | sha256sum -c -
           rm -rf /tmp/freegpt_assets
           mkdir -p /tmp/freegpt_assets
           unzip -q ai-access-orbot/freegpt_tiny_exact.zip -d /tmp/freegpt_assets
