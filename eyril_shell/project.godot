@@ -1,0 +1,23 @@
+; EYRIL test shell v0.1.3
+config_version=5
+
+[application]
+config/name="EYRIL Key Zero TEST"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+
+[display/window]
+size/viewport_width=540
+size/viewport_height=960
+size/window_width_override=540
+size/window_height_override=960
+stretch/mode="canvas_items"
+handheld/orientation=1
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/default_filters/use_nearest_mipmap_filter=false
+
+[autoload]
+GameLog="*res://scripts/game_log.gd"
