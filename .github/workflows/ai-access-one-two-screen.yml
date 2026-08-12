@@ -1,0 +1,90 @@
+name: AI Access One TwoScreen
+
+on:
+  push:
+    branches: [ ai-access-build ]
+    paths:
+      - 'ai-access-one/TWO_SCREEN_TRIGGER'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout overlay
+        uses: actions/checkout@v4
+
+      - name: Java 24
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '24'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android toolchain
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' 'platform-tools' 'ndk;29.0.14206865'
+
+      - name: Clone pinned Orbot source
+        run: |
+          git clone https://github.com/guardianproject/orbot-android.git orbot-src
+          cd orbot-src
+          git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+          git submodule update --init --recursive
+
+      - name: Apply BrowserOnly and TwoScreen patches
+        run: |
+          python3 ai-access-orbot/patch_orbot.py orbot-src ai-access-orbot/overlay
+          python3 ai-access-orbot/patch_noprofile.py orbot-src
+          python3 ai-access-orbot/patch_autotarget.py orbot-src
+          python3 ai-access-orbot/patch_browseronly.py orbot-src
+          python3 ai-access-orbot/patch_twoscreen.py orbot-src
+          grep -n 'com.bmw1975487.aione.routefix8' orbot-src/app/build.gradle.kts
+          grep -n '0.2.8-twoscreen' orbot-src/app/build.gradle.kts
+          grep -n 'buildMainScreen' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'buildSettingsScreen' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'ВКЛЮЧИТЬ CHATGPT' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'ОТПРАВИТЬ ZIP В TELEGRAM' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'СОХРАНИТЬ ZIP В DOWNLOADS' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'CHATGPT_WEB_OPEN' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'https://chatgpt.com/' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'TRANSPORT_PREFERRED' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
+          grep -n 'TRANSPORT_REMEMBERED' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
+          grep -n 'Prefs.transport = remembered ?: Transport.SNOWFLAKE' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
+          grep -n 'fullDeviceFallback=false' orbot-src/app/src/main/java/org/torproject/android/service/vpn/OrbotVpnManager.java
+          ! grep -n 'Клиент ChatGPT не найден' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+
+      - name: Build arm64 APK
+        working-directory: orbot-src
+        run: ./gradlew --no-daemon --stacktrace assembleFullpermDebug
+
+      - name: Verify APK
+        run: |
+          APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | grep -E 'arm64|v8a' | head -1)
+          if [ -z "$APK" ]; then APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | head -1); fi
+          test -n "$APK"
+          echo "APK=$APK" | tee ai-access-orbot/build-info-v028.txt
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$APK" | tee -a ai-access-orbot/build-info-v028.txt
+          sha256sum "$APK" | tee ai-access-orbot/route-apk-v028.sha256
+          echo '--- native payload ---' | tee -a ai-access-orbot/build-info-v028.txt
+          unzip -l "$APK" | grep -E 'arm64-v8a|libtor|libhev|libgojni|lib.*proxy' | tee -a ai-access-orbot/build-info-v028.txt || true
+          echo '--- required feature markers ---' | tee -a ai-access-orbot/build-info-v028.txt
+          for DEX in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$DEX" | strings; done | grep -E '0.2.8-twoscreen|UI_SCREEN|ВКЛЮЧИТЬ CHATGPT|ОТПРАВИТЬ ZIP В TELEGRAM|СОХРАНИТЬ ZIP В DOWNLOADS|CHATGPT_WEB_OPEN|https://chatgpt.com/|TRANSPORT_PREFERRED|TRANSPORT_REMEMBERED|BROWSER_TARGET_READY' | head -120 | tee -a ai-access-orbot/build-info-v028.txt || true
+          cp "$APK" ai-access-orbot/AI_Access_One_v0.2.8_TWO_SCREEN_arm64.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_Access_One_v0.2.8_TWO_SCREEN_arm64
+          path: |
+            ai-access-orbot/AI_Access_One_v0.2.8_TWO_SCREEN_arm64.apk
+            ai-access-orbot/route-apk-v028.sha256
+            ai-access-orbot/build-info-v028.txt
+          if-no-files-found: error
+          retention-days: 7
