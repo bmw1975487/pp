@@ -23,7 +23,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/eyril"
-          base64 -d eyril_v025/source.b64 > "$RUNNER_TEMP/source.zip"
+          cat eyril_v025/chunks/c00 eyril_v025/chunks/c01 eyril_v025/chunks/c02 eyril_v025/chunks/c03 eyril_v025/chunks/c04 eyril_v025/chunks/c05 eyril_v025/chunks/c06 > "$RUNNER_TEMP/source.b64"
+          test "$(wc -c < "$RUNNER_TEMP/source.b64")" -eq 26848
+          base64 -d "$RUNNER_TEMP/source.b64" > "$RUNNER_TEMP/source.zip"
           echo "sha256=$(sha256sum "$RUNNER_TEMP/source.zip" | cut -d' ' -f1)"
           test "$(sha256sum "$RUNNER_TEMP/source.zip" | cut -d' ' -f1)" = "07ec0eaa150a98c47ffa1b584fe92a02007939b8ee936f412dde6e3762f2cb4d"
           unzip -t "$RUNNER_TEMP/source.zip"
