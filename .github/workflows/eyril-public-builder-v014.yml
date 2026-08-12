@@ -1,0 +1,96 @@
+name: Build EYRIL raw shell v0.1.4
+
+on:
+  push:
+    branches: [eyril-public-builder-v014]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare project and placeholders
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/eyril/assets/raw"
+          cp -a eyril_shell/. "$RUNNER_TEMP/eyril/"
+          mkdir -p "$RUNNER_TEMP/eyril/assets/raw"
+          PLACE='/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD52ooor3TiP//Z'
+          for n in main_splash S001 S002 S003 S004 S005 S006 S007 S008 S009 S010; do
+            printf '%s' "$PLACE" | base64 -d > "$RUNNER_TEMP/eyril/assets/raw/$n.dat"
+          done
+
+      - name: Install Godot 4.7.1
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/godot" && cd "$RUNNER_TEMP/godot"
+          curl -fL --retry 4 -o godot.zip 'https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip'
+          unzip -q godot.zip && chmod +x Godot_v4.7.1-stable_linux.x86_64
+          echo "$RUNNER_TEMP/godot/Godot_v4.7.1-stable_linux.x86_64" > "$RUNNER_TEMP/godot_path.txt"
+          curl -fL --retry 4 -o templates.tpz 'https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz'
+          mkdir tpl && unzip -q templates.tpz -d tpl
+          mkdir -p "$HOME/.local/share/godot/export_templates/4.7.1.stable"
+          cp -a tpl/templates/. "$HOME/.local/share/godot/export_templates/4.7.1.stable/"
+
+      - name: Debug keystore
+        shell: bash
+        run: |
+          keytool -genkeypair -keystore "$RUNNER_TEMP/eyril/debug.keystore" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=Android Debug,O=EYRIL,C=US'
+
+      - name: Configure SDK with safety timeout
+        shell: bash
+        run: |
+          GODOT="$(cat "$RUNNER_TEMP/godot_path.txt")"
+          set +e
+          timeout 12s "$GODOT" --headless --editor --path "$RUNNER_TEMP/eyril" --script res://tools/setup_android.gd
+          echo "setup_exit=$?"
+          set -e
+          find "$HOME/.config/godot" -maxdepth 2 -type f -print 2>/dev/null || true
+
+      - name: Parser smoke test
+        shell: bash
+        run: |
+          GODOT="$(cat "$RUNNER_TEMP/godot_path.txt")"
+          timeout 25s "$GODOT" --headless --editor --path "$RUNNER_TEMP/eyril" --quit-after 4
+
+      - name: Export Android APK
+        shell: bash
+        run: |
+          GODOT="$(cat "$RUNNER_TEMP/godot_path.txt")"
+          mkdir -p "$RUNNER_TEMP/eyril/build"
+          timeout 180s "$GODOT" --headless --path "$RUNNER_TEMP/eyril" --export-debug Android "$RUNNER_TEMP/eyril/build/EYRIL_SHELL_v0.1.4.apk"
+          test -s "$RUNNER_TEMP/eyril/build/EYRIL_SHELL_v0.1.4.apk"
+          unzip -l "$RUNNER_TEMP/eyril/build/EYRIL_SHELL_v0.1.4.apk" > "$RUNNER_TEMP/eyril/build/apk_listing.txt"
+          grep -E 'assets/raw|sparsepck|AndroidManifest' "$RUNNER_TEMP/eyril/build/apk_listing.txt" || true
+
+      - name: Collect signing tools
+        shell: bash
+        run: |
+          BT=$(ls -1d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          mkdir -p "$RUNNER_TEMP/sign_tools"
+          cp "$BT/zipalign" "$RUNNER_TEMP/sign_tools/"
+          cp "$BT/lib/apksigner.jar" "$RUNNER_TEMP/sign_tools/"
+          chmod +x "$RUNNER_TEMP/sign_tools/zipalign"
+          echo "$(basename "$BT")" > "$RUNNER_TEMP/sign_tools/version.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EYRIL_SHELL_v0.1.4
+          path: |
+            ${{ runner.temp }}/eyril/build/EYRIL_SHELL_v0.1.4.apk
+            ${{ runner.temp }}/eyril/build/apk_listing.txt
+            ${{ runner.temp }}/sign_tools/zipalign
+            ${{ runner.temp }}/sign_tools/apksigner.jar
+            ${{ runner.temp }}/sign_tools/version.txt
+          compression-level: 0
+          retention-days: 1
