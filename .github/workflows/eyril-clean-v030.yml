@@ -1,0 +1,190 @@
+name: Build EYRIL CLEAN v0.3.0
+
+on:
+  push:
+    branches: [eyril-clean-v030]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Reassemble clean Godot project text
+        shell: bash
+        run: |
+          set -euxo pipefail
+          PROJ="$RUNNER_TEMP/eyril_clean"
+          mkdir -p "$PROJ"
+          base64 -d eyril_clean_v030/project.b64 > "$RUNNER_TEMP/project.zip"
+          echo "project_text_sha256=$(sha256sum "$RUNNER_TEMP/project.zip" | awk '{print $1}')"
+          test "$(sha256sum "$RUNNER_TEMP/project.zip" | awk '{print $1}')" = "5964e0ebd29b526f9b6fdaf840ca8b4e981b83d7f6770795fdf56d39ea486b98"
+          unzip -t "$RUNNER_TEMP/project.zip"
+          unzip -q "$RUNNER_TEMP/project.zip" -d "$PROJ"
+          test -f "$PROJ/project.godot"
+          test -f "$PROJ/scripts/main.gd"
+          test -f "$PROJ/tools/validate.gd"
+          echo "PROJ=$PROJ" >> "$GITHUB_ENV"
+
+      - name: Recover original media bytes from v0.2.4 build artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 6 --retry-all-errors \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/9150318629/zip" \
+            -o "$RUNNER_TEMP/v024_artifact.zip"
+          mkdir -p "$RUNNER_TEMP/v024_art" "$RUNNER_TEMP/v024_apk"
+          unzip -q "$RUNNER_TEMP/v024_artifact.zip" -d "$RUNNER_TEMP/v024_art"
+          OLD_APK="$(find "$RUNNER_TEMP/v024_art" -type f -name '*.apk' | head -1)"
+          test -s "$OLD_APK"
+          unzip -q "$OLD_APK" -d "$RUNNER_TEMP/v024_apk"
+          RAW="$RUNNER_TEMP/v024_apk/assets/assets/raw"
+          test -d "$RAW"
+          echo "RAW=$RAW" >> "$GITHUB_ENV"
+          echo "OLD_APK=$OLD_APK" >> "$GITHUB_ENV"
+
+      - name: Put media into standard Godot resource paths
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$PROJ/assets/backgrounds/common" "$PROJ/assets/backgrounds/boy" "$PROJ/assets/backgrounds/girl"
+          mkdir -p "$PROJ/assets/ui" "$PROJ/assets/audio/voice" "$PROJ/assets/audio/music" "$PROJ/assets/audio/ambience" "$PROJ/assets/audio/sfx" "$PROJ/assets/audio/pets"
+          cp "$RAW/main_splash.dat" "$PROJ/assets/backgrounds/main_splash.jpg"
+          for n in 001 002 003; do cp "$RAW/bg_common_S${n}.dat" "$PROJ/assets/backgrounds/common/S${n}.jpg"; done
+          for n in $(seq -w 4 20); do
+            n3=$(printf '%03d' "$((10#$n))")
+            cp "$RAW/bg_boy_S${n3}.dat" "$PROJ/assets/backgrounds/boy/S${n3}.jpg"
+            cp "$RAW/bg_girl_S${n3}.dat" "$PROJ/assets/backgrounds/girl/S${n3}.jpg"
+          done
+          for n in $(seq -w 1 19); do
+            n3=$(printf '%03d' "$((10#$n))")
+            cp "$RAW/voice_S${n3}.dat" "$PROJ/assets/audio/voice/S${n3}.wav"
+          done
+          cp "$RAW/voice_S020_F.dat" "$PROJ/assets/audio/voice/S020_F.wav"
+          for f in M01_PREDEL_MYSTERY_BEGIN M02_LIMEN_HOME_DISCOVERY M03_FRIENDS_CHAMBER M07_TIME_BROKEN_METER M08_CHOICE_FIRST_EDIT; do cp "$RAW/$f.dat" "$PROJ/assets/audio/music/$f.ogg"; done
+          for f in A01_CITY_RAIN_NIGHT_LOOP A02_MUSEUM_WORKSHOP_RAIN_LOOP A03_TIME_FREEZE_VOID_LOOP A04_TRAM_RAIN_RAIL_LOOP A05_BLACK_WATER_BOAT_LOOP A06_LIMEN_DOCK_WIND_WATER_LOOP A07_ACADEMY_HALL_ROOMTONE_LOOP A09_ANCHOR_GARDEN_GLASS_LOOP A10_NIGHT_ROOM_RAIN_WINDOW_LOOP; do cp "$RAW/$f.dat" "$PROJ/assets/audio/ambience/$f.ogg"; done
+          for f in S01_KEY_ZERO_PICKUP_GLASS_METAL S02_CLOCK_STOP_TIME_SNAP S03_SILVER_SHARD_PICKUP S04_PEOPLE_VANISH_SOFT S05_FIRST_EDIT_SILVER_SWEEP S06_TRAM_DOOR_TO_VOID S07_BOAT_OAR_BLACK_WATER S08_ACADEMY_ARRIVAL_BELL S09_KEY_ZERO_ACTIVATION U02_CONFIRM_SOFT_CHIME U03_CANCEL_LOW U05_CHOICE_APPEAR U06_CHOICE_LOCK U07_ATLAS_OPEN; do cp "$RAW/$f.dat" "$PROJ/assets/audio/sfx/$f.ogg"; done
+          for f in P01_EYLA_MAGIC_CAT_PURR_LOOP P03_EYLA_BOND_RESONANCE P04_TARIS_CRYSTAL_DRAGON_IDLE_LOOP P06_TARIS_BOND_RESONANCE; do cp "$RAW/$f.dat" "$PROJ/assets/audio/pets/$f.ogg"; done
+          for f in ui_start ui_continue ui_next ui_back ui_button_blank ui_round ui_panel; do cp "$RAW/$f.dat" "$PROJ/assets/ui/$f.png"; done
+          ICON_ENTRY="$(find "$RUNNER_TEMP/v024_apk" -type f -path '*/mipmap-xxxhdpi-v4/icon.webp' | head -1 || true)"
+          if [ -z "$ICON_ENTRY" ]; then ICON_ENTRY="$(find "$RUNNER_TEMP/v024_apk" -type f -name 'icon.webp' | head -1 || true)"; fi
+          test -s "$ICON_ENTRY"
+          cp "$ICON_ENTRY" "$PROJ/assets/ui/app_icon.webp"
+          sed -i 's#res://assets/ui/app_icon.png#res://assets/ui/app_icon.webp#g' "$PROJ/project.godot" "$PROJ/export_presets.cfg"
+          sed -i 's#M10_FINALE_HOME_AT_THE_EDGE.ogg#M03_FRIENDS_CHAMBER.ogg#g' "$PROJ/data/screens.json"
+
+      - name: Verify raw signatures and exact counts before Godot import
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY' | tee "$PROJ/VALIDATION_PREIMPORT.txt"
+          from pathlib import Path
+          import os
+          root=Path(os.environ['PROJ'])
+          errors=[]
+          bgs=list((root/'assets/backgrounds').rglob('*.jpg'))
+          voices=list((root/'assets/audio/voice').glob('*.wav'))
+          ui=list((root/'assets/ui').glob('ui_*.png'))
+          oggs=list((root/'assets/audio').rglob('*.ogg'))
+          print('backgrounds',len(bgs),'voices',len(voices),'ui',len(ui),'oggs',len(oggs))
+          if len(bgs)!=38: errors.append(f'background count={len(bgs)} expected=38')
+          if len(voices)!=20: errors.append(f'voice count={len(voices)} expected=20 (S020_M known missing)')
+          if len(ui)!=7: errors.append(f'ui count={len(ui)} expected=7')
+          for p in bgs:
+              if p.read_bytes()[:3] != b'\xff\xd8\xff': errors.append(f'bad jpeg {p}')
+          for p in voices:
+              d=p.read_bytes()[:12]
+              if not (d[:4]==b'RIFF' and d[8:12]==b'WAVE'): errors.append(f'bad wav {p}')
+          for p in oggs:
+              if p.read_bytes()[:4] != b'OggS': errors.append(f'bad ogg {p}')
+          for p in ui:
+              if p.read_bytes()[:8] != b'\x89PNG\r\n\x1a\n': errors.append(f'bad png {p}')
+          if errors:
+              print('\n'.join('ERROR '+x for x in errors)); raise SystemExit(2)
+          print('PREIMPORT_OK')
+          print('KNOWN_MISSING: S020_M voice — no fake replacement')
+          PY
+
+      - name: Install Godot 4.7.1 and export templates
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/godot" && cd "$RUNNER_TEMP/godot"
+          curl -fL --retry 8 --retry-all-errors --retry-delay 3 -o godot.zip 'https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip'
+          unzip -q godot.zip
+          chmod +x Godot_v4.7.1-stable_linux.x86_64
+          echo "GODOT=$RUNNER_TEMP/godot/Godot_v4.7.1-stable_linux.x86_64" >> "$GITHUB_ENV"
+          curl -fL --retry 8 --retry-all-errors --retry-delay 3 -o templates.tpz 'https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz'
+          mkdir tpl && unzip -q templates.tpz -d tpl
+          mkdir -p "$HOME/.local/share/godot/export_templates/4.7.1.stable"
+          cp -a tpl/templates/. "$HOME/.local/share/godot/export_templates/4.7.1.stable/"
+
+      - name: Import resources and parser smoke test
+        shell: bash
+        run: |
+          set -euxo pipefail
+          timeout 120s "$GODOT" --headless --editor --path "$PROJ" --quit-after 20 2>&1 | tee "$PROJ/IMPORT_LOG.txt"
+          ! grep -E 'SCRIPT ERROR|Parse Error' "$PROJ/IMPORT_LOG.txt"
+
+      - name: Validate with Godot ResourceLoader
+        shell: bash
+        run: |
+          set -euxo pipefail
+          set +e
+          timeout 120s "$GODOT" --headless --path "$PROJ" --script "$PROJ/tools/validate.gd" 2>&1 | tee "$PROJ/VALIDATION_GODOT.txt"
+          CODE=${PIPESTATUS[0]}
+          set -e
+          test "$CODE" -eq 0
+          grep -q 'VALIDATION_OK' "$PROJ/VALIDATION_GODOT.txt"
+
+      - name: Create debug keystore and export Android APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          keytool -genkeypair -keystore "$PROJ/debug.keystore" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=Android Debug,O=EYRIL,C=US'
+          export GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$PROJ/debug.keystore"
+          export GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey
+          export GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android
+          mkdir -p "$PROJ/build"
+          timeout 240s "$GODOT" --headless --path "$PROJ" --export-debug Android "$PROJ/build/EYRIL_TEST_v0.3.0.apk" 2>&1 | tee "$PROJ/BUILD_LOG.txt"
+          test -s "$PROJ/build/EYRIL_TEST_v0.3.0.apk"
+          if unzip -l "$PROJ/build/EYRIL_TEST_v0.3.0.apk" | grep -E '\.dat$'; then echo 'ERROR: .dat resource found in CLEAN APK'; exit 3; fi
+          sha256sum "$PROJ/build/EYRIL_TEST_v0.3.0.apk" | tee "$PROJ/SHA256.txt"
+          unzip -l "$PROJ/build/EYRIL_TEST_v0.3.0.apk" > "$PROJ/APK_LISTING.txt"
+
+      - name: Create source snapshot
+        shell: bash
+        run: |
+          set -euxo pipefail
+          (cd "$RUNNER_TEMP" && zip -qr EYRIL_GODOT_CLEAN_v0.3.0_SOURCE.zip eyril_clean -x 'eyril_clean/.godot/*' 'eyril_clean/build/*' 'eyril_clean/debug.keystore')
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EYRIL_GODOT_CLEAN_v0.3.0
+          path: |
+            ${{ env.PROJ }}/build/EYRIL_TEST_v0.3.0.apk
+            ${{ env.PROJ }}/VALIDATION_PREIMPORT.txt
+            ${{ env.PROJ }}/VALIDATION_GODOT.txt
+            ${{ env.PROJ }}/IMPORT_LOG.txt
+            ${{ env.PROJ }}/BUILD_LOG.txt
+            ${{ env.PROJ }}/SHA256.txt
+            ${{ env.PROJ }}/APK_LISTING.txt
+            ${{ runner.temp }}/EYRIL_GODOT_CLEAN_v0.3.0_SOURCE.zip
+          compression-level: 0
+          retention-days: 1
