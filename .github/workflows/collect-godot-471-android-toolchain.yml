@@ -1,0 +1,46 @@
+name: Collect Godot 4.7.1 Android Toolchain
+
+on:
+  push:
+    branches: [eyril-toolchain-471]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Godot editor and templates
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/godot471"
+          cd "$RUNNER_TEMP/godot471"
+          curl -fL --retry 12 --retry-all-errors --retry-delay 4 -o godot.zip 'https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip'
+          unzip -q godot.zip
+          chmod +x Godot_v4.7.1-stable_linux.x86_64
+          ./Godot_v4.7.1-stable_linux.x86_64 --headless --version | tee version.txt
+          curl -fL --retry 12 --retry-all-errors --retry-delay 4 -o templates.tpz 'https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz'
+          mkdir extracted
+          unzip -q templates.tpz -d extracted
+          find extracted -maxdepth 3 -type f -printf '%p %s\n' | sort | tee template_listing.txt
+          DEBUG_APK="$(find extracted -type f -name 'android_debug.apk' | head -1)"
+          RELEASE_APK="$(find extracted -type f -name 'android_release.apk' | head -1)"
+          test -s "$DEBUG_APK"
+          test -s "$RELEASE_APK"
+          mkdir -p package/export_templates/4.7.1.stable package/bin
+          cp Godot_v4.7.1-stable_linux.x86_64 package/bin/godot
+          cp "$DEBUG_APK" package/export_templates/4.7.1.stable/android_debug.apk
+          cp "$RELEASE_APK" package/export_templates/4.7.1.stable/android_release.apk
+          cp version.txt template_listing.txt package/
+          du -ah package | sort -h | tail -20
+      - uses: actions/upload-artifact@v4
+        with:
+          name: godot-4.7.1-android-toolchain
+          path: ${{ runner.temp }}/godot471/package
+          compression-level: 0
+          retention-days: 1
