@@ -23,11 +23,11 @@ jobs:
       - name: Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install exact public toolchain
+      - name: Install exact public compile toolchain
         run: |
           set -euxo pipefail
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' 'platform-tools' 'ndk;29.0.14206865'
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' 'platform-tools'
 
       - name: Populate Gradle/Maven caches from public Orbot source
         run: |
@@ -36,14 +36,15 @@ jobs:
           cd orbot-public
           git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
           git submodule update --init --recursive
-          ./gradlew --no-daemon --stacktrace assembleFullpermDebug
+          ./gradlew --no-daemon --stacktrace :app:dependencies --configuration fullpermDebugCompileClasspath
+          ./gradlew --no-daemon --stacktrace :app:dependencies --configuration fullpermDebugRuntimeClasspath
 
       - name: Package only generic compiler/cache material
         run: |
           set -euxo pipefail
-          mkdir -p pack/gradle pack/android-sdk pack/java
-          cp -a "$HOME/.gradle/caches/modules-2" pack/gradle/
-          if [ -d "$HOME/.gradle/caches/9.6.1" ]; then cp -a "$HOME/.gradle/caches/9.6.1" pack/gradle/; fi
+          mkdir -p pack/gradle/caches pack/android-sdk pack/java
+          cp -a "$HOME/.gradle/caches/modules-2" pack/gradle/caches/
+          if [ -d "$HOME/.gradle/caches/9.6.1" ]; then cp -a "$HOME/.gradle/caches/9.6.1" pack/gradle/caches/; fi
           cp -a "$HOME/.gradle/wrapper" pack/gradle/
           cp -a "$ANDROID_HOME/platforms/android-37.1" pack/android-sdk/
           cp -a "$ANDROID_HOME/build-tools/37.0.0" pack/android-sdk/
@@ -57,7 +58,7 @@ jobs:
       - name: Upload cache artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-build-cache-public-orbot
+          name: android-build-cache-public-orbot-deps
           path: |
             android-build-cache.tar.zst
             android-build-cache.tar.zst.sha256
