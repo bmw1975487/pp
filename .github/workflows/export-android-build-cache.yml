@@ -1,0 +1,65 @@
+name: Export generic Android build cache
+
+on:
+  push:
+    branches: [ toolchain-cache-20260812 ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cache:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Java 24
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '24'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install exact public toolchain
+        run: |
+          set -euxo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' 'platform-tools' 'ndk;29.0.14206865'
+
+      - name: Populate Gradle/Maven caches from public Orbot source
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/guardianproject/orbot-android.git orbot-public
+          cd orbot-public
+          git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+          git submodule update --init --recursive
+          ./gradlew --no-daemon --stacktrace assembleFullpermDebug
+
+      - name: Package only generic compiler/cache material
+        run: |
+          set -euxo pipefail
+          mkdir -p pack/gradle pack/android-sdk pack/java
+          cp -a "$HOME/.gradle/caches/modules-2" pack/gradle/
+          if [ -d "$HOME/.gradle/caches/9.6.1" ]; then cp -a "$HOME/.gradle/caches/9.6.1" pack/gradle/; fi
+          cp -a "$HOME/.gradle/wrapper" pack/gradle/
+          cp -a "$ANDROID_HOME/platforms/android-37.1" pack/android-sdk/
+          cp -a "$ANDROID_HOME/build-tools/37.0.0" pack/android-sdk/
+          cp -a "$JAVA_HOME" pack/java/jdk24
+          printf 'Orbot public commit: 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a\n' > pack/PROVENANCE.txt
+          printf 'No FreeGPT or user-private source is contained in this artifact.\n' >> pack/PROVENANCE.txt
+          tar --zstd -cf android-build-cache.tar.zst pack
+          sha256sum android-build-cache.tar.zst > android-build-cache.tar.zst.sha256
+          du -h android-build-cache.tar.zst
+
+      - name: Upload cache artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-cache-public-orbot
+          path: |
+            android-build-cache.tar.zst
+            android-build-cache.tar.zst.sha256
+          if-no-files-found: error
+          retention-days: 2
