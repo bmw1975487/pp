@@ -92,3 +92,5 @@ jobs:
             ${{ runner.temp }}/eyril/build/EYRIL_SHELL_v0.1.3.apk.sha256
           compression-level: 0
           retention-days: 1
+
+# rebuild after complete project chunks
