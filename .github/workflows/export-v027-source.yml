@@ -1,0 +1,52 @@
+name: Export v0.2.7 Working Source
+
+on:
+  push:
+    branches: [ ai-access-build ]
+    paths:
+      - 'ai-access-one/EXPORT_V027_SOURCE_TRIGGER'
+      - '.github/workflows/export-v027-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify working commit
+        run: |
+          set -euo pipefail
+          COMMIT=5f2188aaaee61a6201813cc26362e30570ad2cd1
+          git cat-file -e "$COMMIT^{commit}"
+          echo "$COMMIT" > WORKING_COMMIT.txt
+          git show -s --format='%H%n%ci%n%s' "$COMMIT" | tee WORKING_COMMIT_INFO.txt
+
+      - name: Export exact v0.2.7 project source
+        run: |
+          set -euo pipefail
+          COMMIT=5f2188aaaee61a6201813cc26362e30570ad2cd1
+          mkdir -p export
+          git archive --format=zip --prefix=AI_Access_One_v0.2.7_WORKING_SOURCE/ \
+            "$COMMIT" \
+            ai-access-orbot \
+            .github/workflows/ai-access-one-noprofile.yml \
+            -o export/AI_Access_One_v0.2.7_WORKING_SOURCE.zip
+          cp WORKING_COMMIT.txt export/
+          cp WORKING_COMMIT_INFO.txt export/
+          sha256sum export/AI_Access_One_v0.2.7_WORKING_SOURCE.zip | tee export/SOURCE_SHA256.txt
+          unzip -l export/AI_Access_One_v0.2.7_WORKING_SOURCE.zip | tee export/SOURCE_FILE_LIST.txt
+
+      - name: Upload exact working source
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_Access_One_v0.2.7_WORKING_SOURCE
+          path: export/*
+          if-no-files-found: error
+          retention-days: 30
