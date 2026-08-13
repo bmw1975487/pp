@@ -1,0 +1,158 @@
+name: Neon RC9 Proven UI Final
+
+on:
+  push:
+    branches: [ neon-rc9-working6 ]
+    paths:
+      - 'freegpt-rc9/BUILD_TRIGGER_FINAL'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout project overlay
+        uses: actions/checkout@v4
+
+      - name: Java 24
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '24'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android toolchain
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' 'platform-tools' 'ndk;29.0.14206865'
+
+      - name: Reconstruct historical RC2 artwork required by patch chain
+        run: |
+          cat freegpt-rc2/assets_b64/part00.txt \
+              freegpt-rc2/assets_b64/part01.txt \
+              freegpt-rc2/assets_b64/part02.txt \
+              freegpt-rc2/assets_b64/part03.txt \
+              freegpt-rc2/assets_b64/part04.txt \
+              freegpt-rc2/assets_b64/part05.txt \
+              freegpt-rc2/assets_b64/part06.txt \
+              freegpt-rc2/assets_b64/part07.txt \
+              freegpt-rc2/assets_b64/part08.txt \
+              freegpt-rc2/assets_b64/part09.txt \
+              freegpt-rc2/assets_b64/part10.txt > /tmp/freegpt_assets.b64
+          base64 -d /tmp/freegpt_assets.b64 > /tmp/freegpt_tiny.zip
+          echo '723d55ec73f17bed3529ce66a00af7d0284c4ee3dd33c248e70afa44beb4d122  /tmp/freegpt_tiny.zip' | sha256sum -c -
+          rm -rf /tmp/freegpt_assets && mkdir -p /tmp/freegpt_assets
+          unzip -q /tmp/freegpt_tiny.zip -d /tmp/freegpt_assets
+
+      - name: Reconstruct supplied Neon artwork
+        run: |
+          cat freegpt-rc9/assets_360/icon_part00.txt | base64 -d > /tmp/neon_icon.webp
+          cat freegpt-rc9/assets_360/main_part00.txt \
+              freegpt-rc9/assets_360/main_part01.txt | base64 -d > /tmp/neon_main.webp
+          cat freegpt-rc9/assets_360/connection_part00.txt \
+              freegpt-rc9/assets_360/connection_part01.txt | base64 -d > /tmp/neon_connection.webp
+          cat freegpt-rc9/assets_360/technical_part00.txt \
+              freegpt-rc9/assets_360/technical_part01.txt | base64 -d > /tmp/neon_technical.webp
+          echo 'f5f28e5c268b9ffc4eb21e2fe6df3b704fe9c1747fcd682226b1a8fea250c53b  /tmp/neon_icon.webp' | sha256sum -c -
+          echo 'eabefaa0cadb627d59f45da5097dcde6b0df8f08ae4fa928871fe0e1492ee7d8  /tmp/neon_main.webp' | sha256sum -c -
+          echo 'f337eccf948b3098a63d085f76e1ff8e158b4a1ff8d44054a819f639aa385082  /tmp/neon_connection.webp' | sha256sum -c -
+          echo '10f086677e88261c153162fff8f6493647e0aa414830b495d5708255d4e6afbe  /tmp/neon_technical.webp' | sha256sum -c -
+
+      - name: Clone pinned Orbot source
+        run: |
+          git clone https://github.com/guardianproject/orbot-android.git orbot-src
+          cd orbot-src
+          git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+          git submodule update --init --recursive
+
+      - name: Apply proven browser networking base
+        run: |
+          python3 ai-access-orbot/patch_orbot.py orbot-src ai-access-orbot/overlay
+          python3 ai-access-orbot/patch_noprofile.py orbot-src
+          python3 ai-access-orbot/patch_autotarget.py orbot-src
+          python3 ai-access-orbot/patch_browseronly.py orbot-src
+          python3 ai-access-orbot/patch_twoscreen.py orbot-src
+          python3 ai-access-orbot/patch_freegpt.py orbot-src
+
+      - name: Apply tested product corrections through RC7
+        run: |
+          mkdir -p orbot-src/app/src/main/res/drawable-nodpi
+          cp /tmp/freegpt_assets/01_welcome.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_welcome.webp
+          cp /tmp/freegpt_assets/02_select.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_select.webp
+          cp /tmp/freegpt_assets/03_settings.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_settings.webp
+          cp /tmp/freegpt_assets/04_products.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_products.webp
+          cp /tmp/freegpt_assets/05_pay.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_pay.webp
+          cp /tmp/freegpt_assets/ic_launcher.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_user_icon.webp
+          python3 freegpt-rc2/patch_user_screens.py orbot-src
+          python3 freegpt-rc3/patch_live_status.py orbot-src
+          python3 freegpt-rc4/patch_service_probe_log.py orbot-src
+          python3 freegpt-rc5/patch_rc5_ux.py orbot-src
+          python3 freegpt-rc6/patch_rc6_local_only.py orbot-src
+          python3 freegpt-rc7/patch_rc7_strict_ready.py orbot-src
+
+      - name: Install exactly the three supplied Neon screens and icon
+        run: |
+          cp /tmp/neon_icon.webp orbot-src/app/src/main/res/drawable-nodpi/neon_icon.webp
+          cp /tmp/neon_main.webp orbot-src/app/src/main/res/drawable-nodpi/neon_main.webp
+          cp /tmp/neon_connection.webp orbot-src/app/src/main/res/drawable-nodpi/neon_connection.webp
+          cp /tmp/neon_technical.webp orbot-src/app/src/main/res/drawable-nodpi/neon_technical.webp
+          python3 freegpt-rc9/patch_neon_proven_ui.py orbot-src
+
+      - name: Validate Neon RC9 source
+        run: |
+          ACT=orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'applicationId = "com.freegpt.access"' orbot-src/app/build.gradle.kts
+          grep -n '1.0.0-rc9-neon-proven' orbot-src/app/build.gradle.kts
+          grep -n 'android:label="Neon"' orbot-src/app/src/main/AndroidManifest.xml
+          grep -n '@drawable/neon_icon' orbot-src/app/src/main/AndroidManifest.xml
+          grep -n 'NEON_UI_SCREEN' "$ACT"
+          grep -n 'NEON_SERVICE_DENIED' "$ACT"
+          grep -n 'PROVIDER_VERIFIED_STRICT' "$ACT"
+          grep -n 'FALSE_READY_BLOCKED' "$ACT"
+          grep -n 'AI_WEB_OPEN' "$ACT"
+          grep -n 'https://chatgpt.com/' "$ACT"
+          grep -n 'https://gemini.google.com/' "$ACT"
+          ! grep -n 'androidx.webkit.ProxyController' "$ACT"
+          ! grep -n 'RC8_WEBVIEW' "$ACT"
+          test -f orbot-src/app/src/main/res/drawable-nodpi/neon_main.webp
+          test -f orbot-src/app/src/main/res/drawable-nodpi/neon_connection.webp
+          test -f orbot-src/app/src/main/res/drawable-nodpi/neon_technical.webp
+          test -f orbot-src/app/src/main/res/drawable-nodpi/neon_icon.webp
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/neon_icon.webp | grep '^f5f28e5c268b9ffc4eb21e2fe6df3b704fe9c1747fcd682226b1a8fea250c53b '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/neon_main.webp | grep '^eabefaa0cadb627d59f45da5097dcde6b0df8f08ae4fa928871fe0e1492ee7d8 '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/neon_connection.webp | grep '^f337eccf948b3098a63d085f76e1ff8e158b4a1ff8d44054a819f639aa385082 '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/neon_technical.webp | grep '^10f086677e88261c153162fff8f6493647e0aa414830b495d5708255d4e6afbe '
+
+      - name: Build arm64 APK
+        working-directory: orbot-src
+        run: ./gradlew --no-daemon --stacktrace assembleFullpermDebug
+
+      - name: Verify final Neon RC9 APK
+        run: |
+          APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | grep -E 'arm64|v8a' | head -1)
+          if [ -z "$APK" ]; then APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | head -1); fi
+          test -n "$APK"
+          echo "APK=$APK" | tee freegpt-rc9/build-info-rc9.txt
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$APK" | tee -a freegpt-rc9/build-info-rc9.txt
+          sha256sum "$APK" | tee freegpt-rc9/Neon_RC9.sha256
+          echo '--- Neon resources ---' | tee -a freegpt-rc9/build-info-rc9.txt
+          unzip -l "$APK" | grep -E 'neon_(main|connection|technical|icon)' | tee -a freegpt-rc9/build-info-rc9.txt
+          echo '--- required DEX markers ---' | tee -a freegpt-rc9/build-info-rc9.txt
+          for DEX in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$DEX" | strings; done | grep -E '1.0.0-rc9-neon-proven|NEON_UI_SCREEN|NEON_SERVICE_DENIED|PROVIDER_VERIFIED_STRICT|FALSE_READY_BLOCKED|AI_WEB_OPEN|SERVICE_ROUTE_ACCEPTED|chatgpt.com|gemini.google.com' | head -300 | tee -a freegpt-rc9/build-info-rc9.txt || true
+          cp "$APK" freegpt-rc9/Neon_RC9_PROVEN_UI.apk
+
+      - name: Upload Neon RC9
+        uses: actions/upload-artifact@v4
+        with:
+          name: Neon_RC9_PROVEN_UI
+          path: |
+            freegpt-rc9/Neon_RC9_PROVEN_UI.apk
+            freegpt-rc9/Neon_RC9.sha256
+            freegpt-rc9/build-info-rc9.txt
+          if-no-files-found: error
+          retention-days: 14
