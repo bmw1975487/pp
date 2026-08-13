@@ -1,4 +1,4 @@
-name: Export Android apksigner
+name: Export Android signing tools
 
 on:
   push:
@@ -21,14 +21,16 @@ jobs:
       - name: Ensure Android Build Tools 36
         run: |
           ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager 'build-tools;36.0.0'
-      - name: Package apksigner
+      - name: Package apksigner and zipalign
         run: |
           mkdir -p dist
           cp "${ANDROID_SDK_ROOT}/build-tools/36.0.0/lib/apksigner.jar" dist/apksigner.jar
-          sha256sum dist/apksigner.jar > dist/APKSIGNER_SHA256.txt
+          cp "${ANDROID_SDK_ROOT}/build-tools/36.0.0/zipalign" dist/zipalign
+          chmod +x dist/zipalign
+          sha256sum dist/apksigner.jar dist/zipalign > dist/TOOLS_SHA256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: Android-apksigner-36
+          name: Android-signing-tools-36
           path: dist/*
           if-no-files-found: error
           retention-days: 7
