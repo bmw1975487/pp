@@ -23,14 +23,15 @@ jobs:
           ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager 'build-tools;36.0.0'
       - name: Package apksigner and zipalign
         run: |
-          mkdir -p dist
+          mkdir -p dist/lib64
           cp "${ANDROID_SDK_ROOT}/build-tools/36.0.0/lib/apksigner.jar" dist/apksigner.jar
           cp "${ANDROID_SDK_ROOT}/build-tools/36.0.0/zipalign" dist/zipalign
+          cp "${ANDROID_SDK_ROOT}/build-tools/36.0.0/lib64/libc++.so" dist/lib64/libc++.so
           chmod +x dist/zipalign
-          sha256sum dist/apksigner.jar dist/zipalign > dist/TOOLS_SHA256.txt
+          sha256sum dist/apksigner.jar dist/zipalign dist/lib64/libc++.so > dist/TOOLS_SHA256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: Android-signing-tools-36
+          name: Android-signing-tools-36-with-libcxx
           path: dist/*
           if-no-files-found: error
           retention-days: 7
