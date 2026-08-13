@@ -1,0 +1,57 @@
+name: Build YouTube Access unsigned APK
+
+on:
+  push:
+    branches: [ youtube-access-ci-public ]
+    paths:
+      - 'youtube-access/**'
+      - '.github/workflows/youtube-access-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: youtube-access-ci-public
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Fetch pinned ByeByeDPI source
+        run: |
+          git clone --depth 1 --branch v.1.7.7 --recurse-submodules https://github.com/romanvht/ByeByeDPI.git ByeByeDPI
+          git -C ByeByeDPI submodule update --init --recursive --depth 1
+      - name: Apply YouTube Access patch
+        run: python3 youtube-access/patch.py
+      - name: Install Android components
+        run: |
+          yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
+          ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'cmake;3.22.1' 'ndk;27.2.12479018'
+          printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > ByeByeDPI/local.properties
+      - name: Build release
+        working-directory: ByeByeDPI
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon clean assembleRelease --stacktrace
+      - name: Prepare aligned unsigned APK and source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          APK="$(find ByeByeDPI/app/build/outputs/apk -type f -name '*universal*release*.apk' | head -n 1)"
+          test -n "$APK"
+          ${ANDROID_SDK_ROOT}/build-tools/36.0.0/zipalign -p -f 4 "$APK" dist/YouTube_Access_v0.1.0_ALIGNED_UNSIGNED.apk
+          zip -qr dist/YouTube_Access_v0.1.0_SOURCE.zip ByeByeDPI -x 'ByeByeDPI/.gradle/*' 'ByeByeDPI/app/build/*' 'ByeByeDPI/.git/*'
+          sha256sum dist/* > dist/SHA256_UNSIGNED.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YouTube-Access-v0.1.0-unsigned
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
