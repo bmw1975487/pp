@@ -17,7 +17,13 @@ gradle.write_text(s, encoding='utf-8')
 # UI JPG files are injected into assets/freevideo after compilation, before zipalign/signing.
 # Android assets are not part of resources.arsc, so this avoids any Gradle image transformation
 # and lets the final APK carry the user's original JPG bytes exactly.
-shutil.copyfile(repo / 'freevideo-orbot/FreeVideoActivity.java', java_dir / 'AiAccessActivity.java')
+activity_dst = java_dir / 'AiAccessActivity.java'
+shutil.copyfile(repo / 'freevideo-orbot/FreeVideoActivity.java', activity_dst)
+# FreeVideoActivity.java was authored from a Kotlin prototype. Java's Deprecated annotation
+# has no string value parameter, so normalize it before javac.
+a = activity_dst.read_text(encoding='utf-8')
+a = a.replace('@Deprecated("Deprecated in Java")', '@Deprecated')
+activity_dst.write_text(a, encoding='utf-8')
 
 manifest = app / 'src/main/AndroidManifest.xml'
 m = manifest.read_text(encoding='utf-8')
@@ -51,10 +57,11 @@ if 'AiAccessPrefs.targetPackage()' not in v or 'builder.addAllowedApplication(ta
 assert 'com.bmw1975487.youtubeaccess' in gradle.read_text(encoding='utf-8')
 assert '0.3.0-orbot' in gradle.read_text(encoding='utf-8')
 assert 'com.google.android.youtube' in manifest.read_text(encoding='utf-8')
-a = (java_dir / 'AiAccessActivity.java').read_text(encoding='utf-8')
+a = activity_dst.read_text(encoding='utf-8')
 for marker in ['YOUTUBE_APP_LAUNCH', 'YOUTUBE_PROBE_START', 'FREEVIDEO_ACTIVITY_CREATE', 'com.google.android.youtube']:
     assert marker in a, marker
 assert 'https://www.youtube.com' not in a
+assert '@Deprecated("Deprecated in Java")' not in a
 
 (root / 'FREEVIDEO_SOURCE_INFO.txt').write_text('''FreeVideo v0.3.0 ORBOT\nBase: guardianproject/orbot-android commit 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a\nWorking route overlay lineage: AI Access One v0.2.7 BrowserOnly commit 5f2188aaaee61a6201813cc26362e30570ad2cd1\nTransport: Orbot / Tor / SmartConnect / Snowflake + HEV tun2socks\nVPN allowed application: com.google.android.youtube only\nNo web YouTube fallback is present.\nUI: FreeVideo screen JPGs are injected byte-for-byte into assets/freevideo after compilation and before signing.\nLive route state and technical log are overlaid inside the supplied Settings design.\n''', encoding='utf-8')
 
