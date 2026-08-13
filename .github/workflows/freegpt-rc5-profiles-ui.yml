@@ -81,6 +81,7 @@ jobs:
           python3 freegpt-rc2/patch_user_screens.py orbot-src
           python3 freegpt-rc3/patch_live_status.py orbot-src
           python3 freegpt-rc4/patch_provider_routes.py orbot-src
+          python3 freegpt-rc5/pre_rc5_compat.py orbot-src
           python3 freegpt-rc5/patch_rc5.py orbot-src
 
       - name: Validate RC5 source
