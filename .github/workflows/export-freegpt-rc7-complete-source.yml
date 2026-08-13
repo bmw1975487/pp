@@ -1,0 +1,168 @@
+name: Export FreeGPT RC7 Complete Source
+
+on:
+  push:
+    branches: [ ai-access-build ]
+    paths:
+      - 'freegpt-handoff/BUILD_TRIGGER'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout project overlay
+        uses: actions/checkout@v4
+
+      - name: Reconstruct exact supplied artwork
+        run: |
+          cat freegpt-rc2/assets_b64/part00.txt \
+              freegpt-rc2/assets_b64/part01.txt \
+              freegpt-rc2/assets_b64/part02.txt \
+              freegpt-rc2/assets_b64/part03.txt \
+              freegpt-rc2/assets_b64/part04.txt \
+              freegpt-rc2/assets_b64/part05.txt \
+              freegpt-rc2/assets_b64/part06.txt \
+              freegpt-rc2/assets_b64/part07.txt \
+              freegpt-rc2/assets_b64/part08.txt \
+              freegpt-rc2/assets_b64/part09.txt \
+              freegpt-rc2/assets_b64/part10.txt > /tmp/freegpt_assets.b64
+          base64 -d /tmp/freegpt_assets.b64 > /tmp/freegpt_tiny.zip
+          echo '723d55ec73f17bed3529ce66a00af7d0284c4ee3dd33c248e70afa44beb4d122  /tmp/freegpt_tiny.zip' | sha256sum -c -
+          rm -rf /tmp/freegpt_assets
+          mkdir -p /tmp/freegpt_assets
+          unzip -q /tmp/freegpt_tiny.zip -d /tmp/freegpt_assets
+
+      - name: Clone exact pinned Orbot source
+        run: |
+          git clone https://github.com/guardianproject/orbot-android.git orbot-src
+          cd orbot-src
+          git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+          git submodule update --init --recursive
+
+      - name: Apply complete proven patch chain through RC7
+        run: |
+          python3 ai-access-orbot/patch_orbot.py orbot-src ai-access-orbot/overlay
+          python3 ai-access-orbot/patch_noprofile.py orbot-src
+          python3 ai-access-orbot/patch_autotarget.py orbot-src
+          python3 ai-access-orbot/patch_browseronly.py orbot-src
+          python3 ai-access-orbot/patch_twoscreen.py orbot-src
+          python3 ai-access-orbot/patch_freegpt.py orbot-src
+          mkdir -p orbot-src/app/src/main/res/drawable-nodpi
+          cp /tmp/freegpt_assets/01_welcome.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_welcome.webp
+          cp /tmp/freegpt_assets/02_select.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_select.webp
+          cp /tmp/freegpt_assets/03_settings.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_settings.webp
+          cp /tmp/freegpt_assets/04_products.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_products.webp
+          cp /tmp/freegpt_assets/05_pay.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_pay.webp
+          cp /tmp/freegpt_assets/ic_launcher.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_user_icon.webp
+          python3 freegpt-rc2/patch_user_screens.py orbot-src
+          python3 freegpt-rc3/patch_live_status.py orbot-src
+          python3 freegpt-rc4/patch_service_probe_log.py orbot-src
+          python3 freegpt-rc5/patch_rc5_ux.py orbot-src
+          python3 freegpt-rc6/patch_rc6_local_only.py orbot-src
+          python3 freegpt-rc7/patch_rc7_strict_ready.py orbot-src
+
+      - name: Validate final RC7 source
+        run: |
+          ACT=orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'applicationId = "com.freegpt.access"' orbot-src/app/build.gradle.kts
+          grep -n '1.0.0-rc7-strict-ready' orbot-src/app/build.gradle.kts
+          grep -n 'PROVIDER_VERIFIED_STRICT' "$ACT"
+          grep -n 'FALSE_READY_BLOCKED' "$ACT"
+          grep -n 'SERVICE_SESSION_RESTORE' "$ACT"
+          grep -n 'LOCAL_TRANSPORT_SWITCH' "$ACT"
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_welcome.webp | grep '^1187abe7d2d975be57f1e53a95439fd8cfad881d2e8455c64b0c7f9c2805ad7f '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_select.webp | grep '^b449eeb5e50ffc372ef202e5e07eb50360b484dd50ad9d7f41a87c4e8143716e '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_settings.webp | grep '^15385f13e4ca1873ce8ab60e6469ca1b29402b864430a762f84ff1d967ffc0d6 '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_products.webp | grep '^8767b10023736048d9200d6082aa2673bdda2a9ded455e272546daa0e9f14e22 '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_pay.webp | grep '^e5c4ba7b04de0457d0b7ce1fcad6f73776246a5bcba6a72475bfa23e9e8918a6 '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/freegpt_user_icon.webp | grep '^afb2b6743c4fade1a9b915a4759df65a26a28a19fd59b85634340993a34d65e5 '
+
+      - name: Assemble complete handoff tree
+        run: |
+          set -e
+          ROOT=FreeGPT_RC7_COMPLETE_SOURCE_HANDOFF
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT/android_project_complete" "$ROOT/repro_patch_chain" "$ROOT/resources/embedded_webp" "$ROOT/workflows" "$ROOT/docs"
+
+          # Fully patched Android project, already at RC7 state.
+          cp -a orbot-src/. "$ROOT/android_project_complete/"
+          find "$ROOT/android_project_complete" -name .git -type d -prune -exec rm -rf {} + || true
+          find "$ROOT/android_project_complete" -name .git -type f -delete || true
+          find "$ROOT/android_project_complete" -name build -type d -prune -exec rm -rf {} + || true
+          find "$ROOT/android_project_complete" -name .gradle -type d -prune -exec rm -rf {} + || true
+
+          # Every patch/source overlay that reproduces the project from pinned upstream.
+          cp -a ai-access-orbot "$ROOT/repro_patch_chain/"
+          cp -a freegpt-rc2 freegpt-rc3 freegpt-rc4 freegpt-rc5 freegpt-rc6 freegpt-rc7 "$ROOT/repro_patch_chain/"
+
+          cp /tmp/freegpt_assets/01_welcome.webp "$ROOT/resources/embedded_webp/"
+          cp /tmp/freegpt_assets/02_select.webp "$ROOT/resources/embedded_webp/"
+          cp /tmp/freegpt_assets/03_settings.webp "$ROOT/resources/embedded_webp/"
+          cp /tmp/freegpt_assets/04_products.webp "$ROOT/resources/embedded_webp/"
+          cp /tmp/freegpt_assets/05_pay.webp "$ROOT/resources/embedded_webp/"
+          cp /tmp/freegpt_assets/ic_launcher.webp "$ROOT/resources/embedded_webp/"
+          cp /tmp/freegpt_tiny.zip "$ROOT/resources/freegpt_tiny_exact.zip"
+
+          cp .github/workflows/ai-access-one-noprofile.yml "$ROOT/workflows/" 2>/dev/null || true
+          cp .github/workflows/freegpt-rc2-user-screens.yml "$ROOT/workflows/"
+          cp .github/workflows/freegpt-rc3-live-status.yml "$ROOT/workflows/"
+          cp .github/workflows/freegpt-rc4-service-probe-log.yml "$ROOT/workflows/"
+          cp .github/workflows/freegpt-rc5-compact-session.yml "$ROOT/workflows/"
+          cp .github/workflows/freegpt-rc6-local-only.yml "$ROOT/workflows/"
+          cp .github/workflows/freegpt-rc7-strict-ready.yml "$ROOT/workflows/"
+          cp .github/workflows/export-freegpt-rc7-complete-source.yml "$ROOT/workflows/"
+
+          cat > "$ROOT/docs/UPSTREAM_PIN.txt" <<'EOF'
+          Upstream Android project: guardianproject/orbot-android
+          Exact pinned commit: 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+          FreeGPT package: com.freegpt.access
+          Final source version in this archive: 1.0.0-rc7-strict-ready
+          Target ABI used in releases: arm64-v8a
+          EOF
+
+          cat > "$ROOT/docs/REPRODUCE_FROM_PINNED_UPSTREAM.txt" <<'EOF'
+          Reproduction order from a fresh clone of the pinned Orbot commit:
+          1. ai-access-orbot/patch_orbot.py <orbot> ai-access-orbot/overlay
+          2. ai-access-orbot/patch_noprofile.py <orbot>
+          3. ai-access-orbot/patch_autotarget.py <orbot>
+          4. ai-access-orbot/patch_browseronly.py <orbot>
+          5. ai-access-orbot/patch_twoscreen.py <orbot>
+          6. ai-access-orbot/patch_freegpt.py <orbot>
+          7. Install the six exact WEBP files into app/src/main/res/drawable-nodpi with the freegpt_* resource names used by the workflow.
+          8. freegpt-rc2/patch_user_screens.py <orbot>
+          9. freegpt-rc3/patch_live_status.py <orbot>
+          10. freegpt-rc4/patch_service_probe_log.py <orbot>
+          11. freegpt-rc5/patch_rc5_ux.py <orbot>
+          12. freegpt-rc6/patch_rc6_local_only.py <orbot>
+          13. freegpt-rc7/patch_rc7_strict_ready.py <orbot>
+
+          CI reference: workflows/freegpt-rc7-strict-ready.yml
+          Release build command used by CI: ./gradlew --no-daemon --stacktrace assembleFullpermDebug
+          EOF
+
+          cat > "$ROOT/docs/WHAT_IS_INCLUDED.txt" <<'EOF'
+          android_project_complete/  - complete patched Android source tree at RC7, no git history/build outputs
+          repro_patch_chain/         - all custom overlay and patch sources needed to reproduce the project
+          resources/embedded_webp/  - exact six embedded UI resources used by RC7
+          workflows/                 - build/export CI workflows
+          docs/                      - pinned upstream and reproduction instructions
+
+          The final user-facing handoff ZIP may additionally include original high-resolution PNG artwork,
+          physical-device logs, latest APK/build audit, and historical working v0.2.7 baseline. Those files
+          are conversation artifacts and are added after this source export is downloaded.
+          EOF
+
+          (cd "$ROOT" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$ROOT/SOURCE_MANIFEST_SHA256.txt"
+          du -sh "$ROOT"
+
+      - name: Upload complete source handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeGPT_RC7_COMPLETE_SOURCE_HANDOFF
+          path: FreeGPT_RC7_COMPLETE_SOURCE_HANDOFF/
+          if-no-files-found: error
+          retention-days: 14
