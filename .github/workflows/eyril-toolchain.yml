@@ -1,0 +1,47 @@
+name: EYRIL Toolchain
+on:
+  push:
+    branches: [eyril-toolchain-ci]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Android build tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "build-tools;35.0.1" "platforms;android-35"
+      - name: Download Godot 4.7.1 and templates
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p portable/godot portable/templates
+          curl -fL --retry 5 -o /tmp/godot.zip https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip
+          curl -fL --retry 5 -o /tmp/templates.tpz https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          unzip -q /tmp/templates.tpz -d /tmp/templates
+          cp /tmp/godot/Godot_v4.7.1-stable_linux.x86_64 portable/godot/godot
+          chmod +x portable/godot/godot
+          # Preserve the complete templates directory so Godot can locate android_debug.apk exactly as released.
+          cp -a /tmp/templates/templates portable/templates/4.7.1.stable
+      - name: Copy Android SDK subset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p portable/android-sdk/build-tools portable/android-sdk/platforms
+          cp -a "$ANDROID_HOME/build-tools/35.0.1" portable/android-sdk/build-tools/
+          cp -a "$ANDROID_HOME/platform-tools" portable/android-sdk/
+          cp -a "$ANDROID_HOME/platforms/android-35" portable/android-sdk/platforms/
+          printf 'Godot 4.7.1 stable\nAndroid build-tools 35.0.1\nAndroid platform 35\n' > portable/MANIFEST.txt
+          du -sh portable
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eyril-portable-toolchain
+          path: portable
+          compression-level: 0
+          retention-days: 1
