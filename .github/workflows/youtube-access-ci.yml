@@ -1,4 +1,4 @@
-name: Build FreeVideo v0.2.1 unsigned APK
+name: Build FreeVideo v0.2.2 unsigned APK
 
 on:
   push:
@@ -46,12 +46,12 @@ jobs:
           mkdir -p dist
           APK="$(find ByeByeDPI/app/build/outputs/apk -type f -name '*universal*release*.apk' | head -n 1)"
           test -n "$APK"
-          ${ANDROID_SDK_ROOT}/build-tools/36.0.0/zipalign -p -f 4 "$APK" dist/FreeVideo_v0.2.1_ALIGNED_UNSIGNED.apk
-          zip -qr dist/FreeVideo_v0.2.1_SOURCE.zip ByeByeDPI -x 'ByeByeDPI/.gradle/*' 'ByeByeDPI/app/build/*' 'ByeByeDPI/.git/*'
+          ${ANDROID_SDK_ROOT}/build-tools/36.0.0/zipalign -p -f 4 "$APK" dist/FreeVideo_v0.2.2_ALIGNED_UNSIGNED.apk
+          zip -qr dist/FreeVideo_v0.2.2_SOURCE.zip ByeByeDPI -x 'ByeByeDPI/.gradle/*' 'ByeByeDPI/app/build/*' 'ByeByeDPI/.git/*'
           sha256sum dist/* > dist/SHA256_UNSIGNED.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: FreeVideo-v0.2.1-unsigned
+          name: FreeVideo-v0.2.2-unsigned
           path: dist/*
           if-no-files-found: error
           retention-days: 30
