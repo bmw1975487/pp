@@ -51,7 +51,7 @@ jobs:
 
       - name: Reconstruct supplied Neon artwork
         run: |
-          base64 -d freegpt-rc9/assets/neon_assets.zip.b64 > /tmp/neon_assets.zip
+          base64 -di freegpt-rc9/assets/neon_assets.zip.b64 > /tmp/neon_assets.zip
           unzip -q /tmp/neon_assets.zip -d /tmp/neon_assets
           echo '--- Neon supplied files ---'
           find /tmp/neon_assets -maxdepth 2 -type f -printf '%p %s bytes\n' | sort
@@ -117,7 +117,6 @@ jobs:
           grep -n 'AI_WEB_OPEN' "$ACT"
           grep -n 'https://chatgpt.com/' "$ACT"
           grep -n 'https://gemini.google.com/' "$ACT"
-          grep -n 'Snowflake' "$ACT" || true
           ! grep -n 'androidx.webkit.ProxyController' "$ACT"
           ! grep -n 'RC8_WEBVIEW' "$ACT"
           test -s orbot-src/app/src/main/res/drawable-nodpi/neon_main.webp
