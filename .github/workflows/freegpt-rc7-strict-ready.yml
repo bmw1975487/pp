@@ -1,0 +1,139 @@
+name: FreeGPT RC7 Strict Ready
+
+on:
+  push:
+    branches: [ ai-access-build ]
+    paths:
+      - 'freegpt-rc7/BUILD_TRIGGER'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout project overlay
+        uses: actions/checkout@v4
+
+      - name: Java 24
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '24'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android toolchain
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' 'platform-tools' 'ndk;29.0.14206865'
+
+      - name: Reconstruct exact supplied artwork
+        run: |
+          cat freegpt-rc2/assets_b64/part00.txt \
+              freegpt-rc2/assets_b64/part01.txt \
+              freegpt-rc2/assets_b64/part02.txt \
+              freegpt-rc2/assets_b64/part03.txt \
+              freegpt-rc2/assets_b64/part04.txt \
+              freegpt-rc2/assets_b64/part05.txt \
+              freegpt-rc2/assets_b64/part06.txt \
+              freegpt-rc2/assets_b64/part07.txt \
+              freegpt-rc2/assets_b64/part08.txt \
+              freegpt-rc2/assets_b64/part09.txt \
+              freegpt-rc2/assets_b64/part10.txt > /tmp/freegpt_assets.b64
+          base64 -d /tmp/freegpt_assets.b64 > /tmp/freegpt_tiny.zip
+          echo '723d55ec73f17bed3529ce66a00af7d0284c4ee3dd33c248e70afa44beb4d122  /tmp/freegpt_tiny.zip' | sha256sum -c -
+          rm -rf /tmp/freegpt_assets
+          mkdir -p /tmp/freegpt_assets
+          unzip -q /tmp/freegpt_tiny.zip -d /tmp/freegpt_assets
+
+      - name: Clone pinned Orbot source
+        run: |
+          git clone https://github.com/guardianproject/orbot-android.git orbot-src
+          cd orbot-src
+          git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+          git submodule update --init --recursive
+
+      - name: Apply proven route engine
+        run: |
+          python3 ai-access-orbot/patch_orbot.py orbot-src ai-access-orbot/overlay
+          python3 ai-access-orbot/patch_noprofile.py orbot-src
+          python3 ai-access-orbot/patch_autotarget.py orbot-src
+          python3 ai-access-orbot/patch_browseronly.py orbot-src
+          python3 ai-access-orbot/patch_twoscreen.py orbot-src
+          python3 ai-access-orbot/patch_freegpt.py orbot-src
+
+      - name: Install exact user artwork and RC7 patches
+        run: |
+          mkdir -p orbot-src/app/src/main/res/drawable-nodpi
+          cp /tmp/freegpt_assets/01_welcome.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_welcome.webp
+          cp /tmp/freegpt_assets/02_select.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_select.webp
+          cp /tmp/freegpt_assets/03_settings.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_settings.webp
+          cp /tmp/freegpt_assets/04_products.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_products.webp
+          cp /tmp/freegpt_assets/05_pay.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_pay.webp
+          cp /tmp/freegpt_assets/ic_launcher.webp orbot-src/app/src/main/res/drawable-nodpi/freegpt_user_icon.webp
+          python3 freegpt-rc2/patch_user_screens.py orbot-src
+          python3 freegpt-rc3/patch_live_status.py orbot-src
+          python3 freegpt-rc4/patch_service_probe_log.py orbot-src
+          python3 freegpt-rc5/patch_rc5_ux.py orbot-src
+          python3 freegpt-rc6/patch_rc6_local_only.py orbot-src
+          python3 freegpt-rc7/patch_rc7_strict_ready.py orbot-src
+
+      - name: Validate RC7 strict-ready source
+        run: |
+          ACT=orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'applicationId = "com.freegpt.access"' orbot-src/app/build.gradle.kts
+          grep -n '1.0.0-rc7-strict-ready' orbot-src/app/build.gradle.kts
+          grep -n 'providerVerified' "$ACT"
+          grep -n 'PROVIDER_VERIFIED_STRICT' "$ACT"
+          grep -n 'FALSE_READY_BLOCKED' "$ACT"
+          grep -n 'ROUTE_ONLY_RESTORED' "$ACT"
+          grep -n 'VERIFIED_SESSION_RESTORED' "$ACT"
+          grep -n 'SERVICE_SESSION_RESTORE' "$ACT"
+          grep -n 'browser_open_issued' "$ACT"
+          grep -n 'AI_WEB_OPEN_BLOCKED' "$ACT"
+          grep -n 'ОТКРЫТЬ СНОВА' "$ACT"
+          grep -n 'main.postDelayed(() -> launchChatGpt(), 450L)' "$ACT"
+          grep -n 'SERVICE_ROUTE_ACCEPTED' "$ACT"
+          grep -n 'LOCAL_TRANSPORT_SWITCH' "$ACT"
+          grep -n 'claude.ai' "$ACT"
+          grep -n 'gemini.google.com' "$ACT"
+          grep -n 'grok.com' "$ACT"
+          ! grep -RniE 'xray|vless|naiveproxy|private endpoint|our server' orbot-src/app/src/main/java/org/torproject/android || true
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_welcome.webp | grep '^1187abe7d2d975be57f1e53a95439fd8cfad881d2e8455c64b0c7f9c2805ad7f '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_select.webp | grep '^b449eeb5e50ffc372ef202e5e07eb50360b484dd50ad9d7f41a87c4e8143716e '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_settings.webp | grep '^15385f13e4ca1873ce8ab60e6469ca1b29402b864430a762f84ff1d967ffc0d6 '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_products.webp | grep '^8767b10023736048d9200d6082aa2673bdda2a9ded455e272546daa0e9f14e22 '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/freegpt_screen_pay.webp | grep '^e5c4ba7b04de0457d0b7ce1fcad6f73776246a5bcba6a72475bfa23e9e8918a6 '
+          sha256sum orbot-src/app/src/main/res/drawable-nodpi/freegpt_user_icon.webp | grep '^afb2b6743c4fade1a9b915a4759df65a26a28a19fd59b85634340993a34d65e5 '
+
+      - name: Build arm64 APK
+        working-directory: orbot-src
+        run: ./gradlew --no-daemon --stacktrace assembleFullpermDebug
+
+      - name: Verify final FreeGPT RC7 APK
+        run: |
+          APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | grep -E 'arm64|v8a' | head -1)
+          if [ -z "$APK" ]; then APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | head -1); fi
+          test -n "$APK"
+          echo "APK=$APK" | tee freegpt-rc7/build-info.txt
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$APK" | tee -a freegpt-rc7/build-info.txt
+          sha256sum "$APK" | tee freegpt-rc7/FreeGPT_RC7.sha256
+          unzip -l "$APK" | grep -E 'freegpt_screen_(welcome|select|settings|products|pay)|freegpt_user_icon' | tee -a freegpt-rc7/build-info.txt
+          echo '--- required DEX markers ---' | tee -a freegpt-rc7/build-info.txt
+          for DEX in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$DEX" | strings; done | grep -E '1.0.0-rc7-strict-ready|PROVIDER_VERIFIED_STRICT|FALSE_READY_BLOCKED|ROUTE_ONLY_RESTORED|VERIFIED_SESSION_RESTORED|SERVICE_SESSION_RESTORE|AI_WEB_OPEN_BLOCKED|AI_WEB_OPEN|SERVICE_ROUTE_ACCEPTED|LOCAL_TRANSPORT_SWITCH|claude.ai|gemini.google.com|grok.com' | head -320 | tee -a freegpt-rc7/build-info.txt || true
+          cp "$APK" freegpt-rc7/FreeGPT_RC7_STRICT_READY.apk
+
+      - name: Upload FreeGPT RC7
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeGPT_RC7_STRICT_READY
+          path: |
+            freegpt-rc7/FreeGPT_RC7_STRICT_READY.apk
+            freegpt-rc7/FreeGPT_RC7.sha256
+            freegpt-rc7/build-info.txt
+          if-no-files-found: error
+          retention-days: 14
