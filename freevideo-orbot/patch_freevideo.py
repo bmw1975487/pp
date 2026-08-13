@@ -14,16 +14,9 @@ s = s.replace('versionName = "0.2.7-browseronly"', 'versionName = "0.3.0-orbot"'
 s = s.replace('AI_Access_One_v0.2.7_BROWSER_ONLY', 'FreeVideo_v0.3.0_ORBOT')
 gradle.write_text(s, encoding='utf-8')
 
-assets_src = repo / 'freevideo-orbot/assets'
-assets_dst = app / 'src/main/assets/freevideo'
-assets_dst.mkdir(parents=True, exist_ok=True)
-for name in ['02_FreeVideo_start.jpg','03_FreeVideo_videohosting.jpg','04_FreeVideo_99rub.jpg','05_FreeVideo_settings.jpg','06_FreeVideo_other_apps.jpg']:
-    shutil.copyfile(assets_src / name, assets_dst / name)
-
-icon_dir = app / 'src/main/res/drawable-nodpi'
-icon_dir.mkdir(parents=True, exist_ok=True)
-shutil.copyfile(assets_src / '01_FreeVideo_icon.jpg', icon_dir / 'freevideo_icon.jpg')
-
+# UI JPG files are injected into assets/freevideo after compilation, before zipalign/signing.
+# Android assets are not part of resources.arsc, so this avoids any Gradle image transformation
+# and lets the final APK carry the user's original JPG bytes exactly.
 shutil.copyfile(repo / 'freevideo-orbot/FreeVideoActivity.java', java_dir / 'AiAccessActivity.java')
 
 manifest = app / 'src/main/AndroidManifest.xml'
@@ -31,7 +24,6 @@ m = manifest.read_text(encoding='utf-8')
 m = m.replace('<package android:name="com.openai.chatgpt" />', '<package android:name="com.google.android.youtube" />')
 if '<package android:name="com.google.android.youtube" />' not in m:
     m = m.replace('<queries>', '<queries>\n        <package android:name="com.google.android.youtube" />', 1)
-m = m.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@drawable/freevideo_icon"')
 m = m.replace('android:label="AI Access One"', 'android:label="FreeVideo"')
 manifest.write_text(m, encoding='utf-8')
 
@@ -64,9 +56,10 @@ for marker in ['YOUTUBE_APP_LAUNCH', 'YOUTUBE_PROBE_START', 'FREEVIDEO_ACTIVITY_
     assert marker in a, marker
 assert 'https://www.youtube.com' not in a
 
-(root / 'FREEVIDEO_SOURCE_INFO.txt').write_text('''FreeVideo v0.3.0 ORBOT\nBase: guardianproject/orbot-android commit 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a\nWorking route overlay lineage: AI Access One v0.2.7 BrowserOnly commit 5f2188aaaee61a6201813cc26362e30570ad2cd1\nTransport: Orbot / Tor / SmartConnect / Snowflake + HEV tun2socks\nVPN allowed application: com.google.android.youtube only\nNo web YouTube fallback is present.\nUI: supplied FreeVideo screens embedded at build time; live route status/log overlays in the supplied design.\n''', encoding='utf-8')
+(root / 'FREEVIDEO_SOURCE_INFO.txt').write_text('''FreeVideo v0.3.0 ORBOT\nBase: guardianproject/orbot-android commit 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a\nWorking route overlay lineage: AI Access One v0.2.7 BrowserOnly commit 5f2188aaaee61a6201813cc26362e30570ad2cd1\nTransport: Orbot / Tor / SmartConnect / Snowflake + HEV tun2socks\nVPN allowed application: com.google.android.youtube only\nNo web YouTube fallback is present.\nUI: FreeVideo screen JPGs are injected byte-for-byte into assets/freevideo after compilation and before signing.\nLive route state and technical log are overlaid inside the supplied Settings design.\n''', encoding='utf-8')
 
 print('FreeVideo v0.3.0 Orbot patch applied')
 print('Package: com.bmw1975487.youtubeaccess')
 print('Target only: com.google.android.youtube')
 print('Web fallback: DISABLED')
+print('JPG assets: post-build injection required')
