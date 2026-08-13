@@ -7,8 +7,8 @@ APP = ROOT / "app"
 g = APP / "build.gradle.kts"
 s = g.read_text()
 s = s.replace('applicationId = "io.github.romanvht.byedpi"', 'applicationId = "com.bmw1975487.youtubeaccess"')
-s = s.replace("versionCode = 1770", "versionCode = 102")
-s = s.replace('versionName = "1.7.7"', 'versionName = "0.2.1"')
+s = s.replace("versionCode = 1770", "versionCode = 103")
+s = s.replace('versionName = "1.7.7"', 'versionName = "0.2.2"')
 s = s.replace("compileSdk = 36", 'compileSdk = 36\n    ndkVersion = "27.2.12479018"')
 s = s.replace("isMinifyEnabled = true", "isMinifyEnabled = false")
 s = s.replace("isShrinkResources = true", "isShrinkResources = false")
@@ -21,8 +21,8 @@ for f in APP.glob("src/main/res/values*/strings.xml"):
     s = re.sub(r'<string name="vpn_notification_content">.*?</string>', '<string name="vpn_notification_content">FreeVideo — видеомаршрут активен</string>', s)
     f.write_text(s)
 
-# Placeholder is deliberately left unoptimized in release; final packaging replaces it
-# byte-for-byte with the user's 01_FreeVideo_icon.jpg before zipalign/signing.
+# Safe compile-time placeholder. Final packaging replaces this drawable with
+# an optimized copy of the user's FreeVideo icon before zipalign/signing.
 icon_b64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD5UooooA//2Q=="
 icon = APP / "src/main/res/drawable/freevideo_icon_jpg.jpg"
 icon.write_bytes(base64.b64decode(icon_b64))
@@ -48,5 +48,5 @@ f.write_text(s)
 
 shutil.copyfile("youtube-access/MainActivity.kt", APP / "src/main/java/io/github/romanvht/byedpi/activities/MainActivity.kt")
 
-(ROOT / "FREEVIDEO_SOURCE_INFO.txt").write_text('''FreeVideo v0.2.1\nBase: romanvht/ByeByeDPI v1.7.7 (GPL-3.0)\nNetwork engine: hufrea/byedpi + heiher/hev-socks5-tunnel.\n\nChanges in v0.2.1:\n- UI is no longer redrawn: Activity loads the supplied JPG screens from APK assets.\n- OPEN is no longer gated by route health probes.\n- After VPN service starts, official com.google.android.youtube is launched immediately.\n- 1.8s launch failsafe if STARTED broadcast is missed.\n- official YouTube-only Android VpnService routing.\n- IPv4-first/TCP-first domain-scoped strategy pool retained from v0.2.0.\n- route testing and strategy rotation continue in background after YouTube is launched.\n- local log export.\n- resource shrinking/minification disabled so the supplied raster icon can be injected byte-for-byte.\n\nThe release packager injects the user's exact six JPG files before signing.\n''')
-print("FreeVideo v0.2.1 exact-JPG + immediate-launch patch applied")
+(ROOT / "FREEVIDEO_SOURCE_INFO.txt").write_text('''FreeVideo v0.2.2 SAFE START\nBase: romanvht/ByeByeDPI v1.7.7 (GPL-3.0)\nNetwork engine: hufrea/byedpi + heiher/hev-socks5-tunnel.\n\nCritical startup changes:\n- onCreate has no VPN, no DNS setup, no preference writes, no file writes and no receiver registration.\n- first frame is the supplied 02_FreeVideo_start.jpg only.\n- all network initialization is lazy after OPEN.\n- every network operation is wrapped so it cannot crash/block the UI.\n- Android VPN permission denial does not block opening official YouTube.\n- official YouTube startActivity is independent of route health.\n- supplied JPG screens are injected as APK assets before signing.\n''')
+print("FreeVideo v0.2.2 SAFE START patch applied")
