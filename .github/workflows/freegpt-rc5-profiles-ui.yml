@@ -83,6 +83,7 @@ jobs:
           python3 freegpt-rc4/patch_provider_routes.py orbot-src
           python3 freegpt-rc5/pre_rc5_compat.py orbot-src
           python3 freegpt-rc5/patch_rc5.py orbot-src
+          python3 freegpt-rc5/post_rc5_compile_fix.py orbot-src
 
       - name: Validate RC5 source
         run: |
@@ -96,6 +97,7 @@ jobs:
           grep -n 'loadForcedProviderTransport' orbot-src/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
           grep -n 'gemini.google.com' orbot-src/app/src/main/java/org/torproject/android/ProviderProfile.java
           grep -n 'claude.ai' orbot-src/app/src/main/java/org/torproject/android/ProviderProfile.java
+          ! grep -n 'AiAccessPrefs.configure(this, currentExit())' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
 
       - name: Build arm64 APK
         working-directory: orbot-src
