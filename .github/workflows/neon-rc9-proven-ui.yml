@@ -51,7 +51,10 @@ jobs:
 
       - name: Reconstruct supplied Neon artwork
         run: |
-          base64 -di freegpt-rc9/assets/neon_assets.zip.b64 > /tmp/neon_assets.zip
+          base64 -di freegpt-rc9/assets/neon_assets.zip.b64 > /tmp/neon_assets.zip || true
+          echo "decoded bytes=$(stat -c%s /tmp/neon_assets.zip)"
+          unzip -t /tmp/neon_assets.zip
+          mkdir -p /tmp/neon_assets
           unzip -q /tmp/neon_assets.zip -d /tmp/neon_assets
           echo '--- Neon supplied files ---'
           find /tmp/neon_assets -maxdepth 2 -type f -printf '%p %s bytes\n' | sort
