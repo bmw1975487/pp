@@ -1,0 +1,34 @@
+name: Export Android apksigner
+
+on:
+  push:
+    branches: [ youtube-access-ci-public ]
+    paths:
+      - '.github/workflows/export-apksigner.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: youtube-access-ci-public
+      - name: Ensure Android Build Tools 36
+        run: |
+          ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager 'build-tools;36.0.0'
+      - name: Package apksigner
+        run: |
+          mkdir -p dist
+          cp "${ANDROID_SDK_ROOT}/build-tools/36.0.0/lib/apksigner.jar" dist/apksigner.jar
+          sha256sum dist/apksigner.jar > dist/APKSIGNER_SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Android-apksigner-36
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
