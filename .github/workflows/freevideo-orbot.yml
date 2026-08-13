@@ -1,0 +1,81 @@
+name: Build FreeVideo Orbot
+
+on:
+  push:
+    branches: [ freevideo-tor-build ]
+    paths:
+      - 'freevideo-orbot/**'
+      - '.github/workflows/freevideo-orbot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: freevideo-tor-build
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '24'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android toolchain
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' 'platform-tools' 'ndk;29.0.14206865'
+
+      - name: Clone pinned Orbot source
+        run: |
+          git clone https://github.com/guardianproject/orbot-android.git orbot-src
+          cd orbot-src
+          git checkout 521d18aa3cd320f5762a57e0bcf9fcf0c8eba15a
+          git submodule update --init --recursive
+
+      - name: Apply proven route overlay and FreeVideo patch
+        run: |
+          python3 ai-access-orbot/patch_orbot.py orbot-src ai-access-orbot/overlay
+          python3 ai-access-orbot/patch_noprofile.py orbot-src
+          python3 ai-access-orbot/patch_autotarget.py orbot-src
+          python3 ai-access-orbot/patch_browseronly.py orbot-src
+          python3 freevideo-orbot/patch_freevideo.py orbot-src .
+          grep -n 'com.bmw1975487.youtubeaccess' orbot-src/app/build.gradle.kts
+          grep -n '0.3.0-orbot' orbot-src/app/build.gradle.kts
+          grep -n 'com.google.android.youtube' orbot-src/app/src/main/AndroidManifest.xml
+          grep -n 'YOUTUBE_APP_LAUNCH' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'YOUTUBE_PROBE_START' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'FREEVIDEO_ACTIVITY_CREATE' orbot-src/app/src/main/java/org/torproject/android/AiAccessActivity.java
+          grep -n 'builder.addAllowedApplication(targetPackage)' orbot-src/app/src/main/java/org/torproject/android/service/vpn/OrbotVpnManager.java
+
+      - name: Build arm64 APK
+        working-directory: orbot-src
+        run: ./gradlew --no-daemon --stacktrace assembleFullpermDebug
+
+      - name: Verify and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | grep -E 'arm64|v8a' | head -1 || true)
+          if [ -z "$APK" ]; then APK=$(find orbot-src/app/build/outputs/apk/fullperm/debug -type f -name '*.apk' | head -1); fi
+          test -n "$APK"
+          cp "$APK" dist/FreeVideo_v0.3.0_ORBOT_arm64_DEBUGSIGNED.apk
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$APK" | tee dist/BUILD_APK_VERIFY.txt
+          sha256sum "$APK" | tee dist/BUILD_SHA256.txt
+          echo '--- feature markers ---' | tee -a dist/BUILD_APK_VERIFY.txt
+          for DEX in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$DEX" | strings; done | grep -E '0.3.0-orbot|FREEVIDEO_ACTIVITY_CREATE|YOUTUBE_APP_LAUNCH|YOUTUBE_PROBE_START|ROUTE_ACCEPTED|LOG_DOWNLOADS_SAVED|com.google.android.youtube' | head -160 | tee -a dist/BUILD_APK_VERIFY.txt
+          zip -qr dist/FreeVideo_v0.3.0_SOURCE_PATCHED.zip orbot-src -x 'orbot-src/.git/*' 'orbot-src/.gradle/*' 'orbot-src/app/build/*'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FreeVideo-v0.3.0-Orbot
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
