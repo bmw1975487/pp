@@ -11,21 +11,25 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Download Godot 4.7.1 editor and templates
+      - name: Download minimal Godot 4.7.1 toolchain
         run: |
           set -euxo pipefail
-          mkdir -p toolchain/editor toolchain/templates
+          mkdir -p payload/editor payload/templates unpacked_templates
           wget -q https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip
           wget -q https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz
-          unzip -q Godot_v4.7.1-stable_linux.x86_64.zip -d toolchain/editor
-          unzip -q Godot_v4.7.1-stable_export_templates.tpz -d toolchain/templates
-          chmod +x toolchain/editor/Godot_v4.7.1-stable_linux.x86_64
-          toolchain/editor/Godot_v4.7.1-stable_linux.x86_64 --version
-          find toolchain -maxdepth 3 -type f -printf '%p %s\n' | sort
-      - name: Upload toolchain
+          unzip -q Godot_v4.7.1-stable_linux.x86_64.zip -d payload/editor
+          unzip -q Godot_v4.7.1-stable_export_templates.tpz -d unpacked_templates
+          chmod +x payload/editor/Godot_v4.7.1-stable_linux.x86_64
+          payload/editor/Godot_v4.7.1-stable_linux.x86_64 --version
+          find unpacked_templates -type f -name 'android_*.apk' -exec cp -v {} payload/templates/ \;
+          find unpacked_templates -type f -name 'version.txt' -exec cp -v {} payload/templates/ \;
+          test -f payload/templates/android_debug.apk
+          test -f payload/templates/android_release.apk
+          find payload -type f -printf '%p %s\n' | sort
+      - name: Upload minimal toolchain
         uses: actions/upload-artifact@v4
         with:
-          name: godot-4.7.1-linux-toolchain
-          path: toolchain
-          compression-level: 0
+          name: godot-4.7.1-minimal-toolchain
+          path: payload
+          compression-level: 6
           retention-days: 1
