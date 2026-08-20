@@ -1,0 +1,29 @@
+name: Godot Toolchain Artifact
+
+on:
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Godot 4.7.1 editor and templates
+        run: |
+          set -euxo pipefail
+          mkdir -p toolchain/editor toolchain/templates
+          wget -q https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip
+          wget -q https://github.com/godotengine/godot-builds/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz
+          unzip -q Godot_v4.7.1-stable_linux.x86_64.zip -d toolchain/editor
+          unzip -q Godot_v4.7.1-stable_export_templates.tpz -d toolchain/templates
+          chmod +x toolchain/editor/Godot_v4.7.1-stable_linux.x86_64
+          toolchain/editor/Godot_v4.7.1-stable_linux.x86_64 --version
+          find toolchain -maxdepth 3 -type f -printf '%p %s\n' | sort
+      - name: Upload toolchain
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-4.7.1-linux-toolchain
+          path: toolchain
+          compression-level: 0
+          retention-days: 1
