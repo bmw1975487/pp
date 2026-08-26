@@ -1,0 +1,169 @@
+    elif role == "FOUR_IMAGES":
+        _set_text(slide, 10, spec.title)
+        _set_text(slide, 33, spec.lead)
+        _set_text(slide, 34, spec.body)
+        _set_header(slide, spec)
+        _insert_images(slide, spec, slide_no)
+    else:
+        raise EngineError("V3_UNKNOWN_LAYOUT_ROLE", f"Неизвестный макет {role}",
+                          stage="PPTX_ASSEMBLE", slide=slide_no, role=role)
+    logger.event("PPTX_ASSEMBLE", "SLIDE", "Слайд собран из реального V3 layout",
+                 slide=slide_no, role=role, layoutName=layout.name,
+                 imageSlots=[{
+                     "idx": s.placeholder_idx, "widthIn": round(s.width_in, 3),
+                     "heightIn": round(s.height_in, 3), "ratio": round(s.exact_ratio, 4),
+                     "requestedRatio": s.requested_ratio, "path": Path(s.path).name if s.path else None,
+                 } for s in spec.image_slots])
+    return {"number": slide_no, "role": role, "title": spec.title,
+            "section": spec.section, "layout": layout.name,
+            "images": [Path(x.path).name for x in spec.image_slots if x.path]}
+
+
+def _add_render_contract(pptx_path: Path, contract: Dict[str, Any]) -> None:
+    temporary = pptx_path.with_suffix(".contract.tmp.pptx")
+    with zipfile.ZipFile(pptx_path, "r") as source, zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "[Content_Types].xml" and b'Extension="json"' not in data:
+                data = data.replace(b"</Types>", b'<Default Extension="json" ContentType="application/json"/></Types>')
+            target.writestr(item, data)
+        target.writestr("nika/render_contract.json",
+                        json.dumps(contract, ensure_ascii=False, indent=2).encode("utf-8"))
+    temporary.replace(pptx_path)
+
+
+def _failure_file(log_path: Path, row: Dict[str, Any]) -> None:
+    try:
+        log_path.with_name("presentation_v3_failure.json").write_text(
+            json.dumps(row, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def run_engine(template_path: str, output_path: str, log_path: str,
+               topic: str, slide_count: int, key: str, callback: Any) -> str:
+    output, log = Path(output_path), Path(log_path)
+    logger = JsonlLogger(log)
+    try:
+        logger.event("ENGINE", "START", "Запуск Presentation V3: TEXT→LAYOUT→IMAGES→PPTX",
+                     topic=topic, slideCount=int(slide_count), template=template_path)
+        if not (5 <= int(slide_count) <= 20):
+            raise EngineError("V3_SLIDE_COUNT_RANGE", "Допустимо от 5 до 20 слайдов",
+                              stage="REQUEST_VALIDATE")
+        if not str(key).startswith("sk-") or len(str(key)) != 35:
+            raise EngineError("V3_ROUTER_KEY_INVALID", "Рабочий RouterAI-ключ не найден", stage="AUTH")
+        template = Path(template_path)
+        if not template.is_file() or template.stat().st_size < 100_000:
+            raise EngineError("V3_TEMPLATE_MISSING", "Новый PPTX-шаблон отсутствует или повреждён",
+                              stage="TEMPLATE_VALIDATE")
+
+        _progress(callback, 2, "TEMPLATE_VALIDATE", "Проверяю новый шаблон")
+        try:
+            prs = Presentation(str(template))
+        except Exception as error:
+            raise EngineError("V3_TEMPLATE_OPEN_FAILED", f"Не удалось открыть новый шаблон: {error}",
+                              stage="TEMPLATE_VALIDATE") from error
+        layouts = _template_layouts(prs)
+        if len(prs.slides) < 9:
+            raise EngineError("V3_TEMPLATE_PROTOTYPES_MISSING",
+                              f"В шаблоне только {len(prs.slides)} prototype slides вместо 9",
+                              stage="TEMPLATE_VALIDATE")
+        for role, idxs in IMAGE_PLACEHOLDERS.items():
+            _image_slots_for_role(layouts[role], role)
+        logger.event("TEMPLATE_VALIDATE", "PASS", "Новый шаблон и все 9 макетов подтверждены",
+                     prototypeSlides=len(prs.slides), layouts={k: v.name for k, v in layouts.items()})
+
+        _progress(callback, 8, "TEXT_PLAN", "Сначала пишу полный текст презентации")
+        text_plan = _create_text_plan(str(topic), int(slide_count), str(key))
+        logger.event("TEXT_PLAN", "PASS", "Полный текст создан до выбора макетов",
+                     authoredSlides=len(text_plan.get("slides") or []))
+
+        _progress(callback, 23, "LAYOUT_PLAN", "Раскладываю текст по макетам нового шаблона")
+        specs = _build_specs(text_plan, str(topic), int(slide_count), layouts, logger)
+
+        total_slots = sum(len(spec.image_slots) for spec in specs)
+        done_slots = 0
+        for slide_no, spec in enumerate(specs, 1):
+            for slot_no, slot in enumerate(spec.image_slots, 1):
+                _progress(callback, 30 + int(done_slots * 42 / max(1, total_slots)),
+                          "IMAGE_GENERATE",
+                          f"Генерирую изображение {done_slots + 1} из {total_slots} под точный размер")
+                _generate_image(spec, slot, slide_no, slot_no, output.parent, str(key), logger)
+                done_slots += 1
+        if total_slots == 0:
+            logger.event("IMAGE_GENERATE", "SKIP", "По выбранным макетам изображения не требуются")
+
+        _progress(callback, 74, "PPTX_ASSEMBLE", "Собираю слайды из настоящего V3-шаблона")
+        _clear_prototype_slides(prs)
+        render_rows: List[Dict[str, Any]] = []
+        for slide_no, spec in enumerate(specs, 1):
+            render_rows.append(_render_spec(prs, layouts, spec, slide_no, logger))
+            _progress(callback, 74 + int(slide_no * 18 / len(specs)), "PPTX_ASSEMBLE",
+                      f"Собираю слайд {slide_no} из {len(specs)}")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        prs.save(str(output))
+        if not output.is_file() or output.stat().st_size < 100_000:
+            raise EngineError("V3_PPTX_NOT_CREATED", "PPTX не создан или слишком мал", stage="PPTX_SAVE")
+
+        contract = {
+            "schema": "nika.presentation.render-contract.v3.1",
+            "engine": ENGINE_ID, "engineVersion": ENGINE_VERSION,
+            "fallback": "DISABLED", "pipeline": ["TEXT_PLAN", "LAYOUT_PLAN", "IMAGE_GENERATE", "PPTX_ASSEMBLE"],
+            "template": template.name,
+            "slideWidth": int(prs.slide_width), "slideHeight": int(prs.slide_height),
+            "slides": render_rows,
+        }
+        _add_render_contract(output, contract)
+
+        _progress(callback, 94, "OUTPUT_VALIDATE", "Проверяю готовый PPTX")
+        with zipfile.ZipFile(output, "r") as archive:
+            bad = archive.testzip()
+            names = archive.namelist()
+            physical = [x for x in names if re.fullmatch(r"ppt/slides/slide\d+\.xml", x)]
+            if bad:
+                raise EngineError("V3_ZIP_INTEGRITY", f"Повреждена запись {bad}", stage="OUTPUT_VALIDATE")
+            if "nika/render_contract.json" not in names:
+                raise EngineError("V3_CONTRACT_MISSING", "Нет render contract", stage="OUTPUT_VALIDATE")
+            if len(physical) != int(slide_count):
+                raise EngineError("V3_OUTPUT_SLIDE_COUNT",
+                                  f"В PPTX {len(physical)} слайдов вместо {slide_count}",
+                                  stage="OUTPUT_VALIDATE")
+        logger.event("ENGINE", "READY", "Presentation V3 завершён",
+                     output=str(output), bytes=output.stat().st_size,
+                     roles=[x["role"] for x in render_rows], imageSlots=total_slots)
+        _progress(callback, 100, "READY", "Презентация V3 готова")
+        return json.dumps({"ok": True, "output": str(output), "log": str(log),
+                           "slides": int(slide_count), "engine": ENGINE_ID,
+                           "roles": [x["role"] for x in render_rows]}, ensure_ascii=False)
+    except EngineError as error:
+        row = {"ts": datetime.now(timezone.utc).isoformat(), "engine": ENGINE_ID,
+               "engineVersion": ENGINE_VERSION, "fallback": "DISABLED", "fallbackUsed": False,
+               "stage": error.stage, "status": "FAIL", "code": error.code,
+               "slide": error.slide, "role": error.role, "message": str(error),
+               "detail": error.detail, "exception": type(error).__name__}
+        logger.event(error.stage, "FAIL", str(error), code=error.code,
+                     slide=error.slide, role=error.role, detail=error.detail)
+        logger.event("ENGINE", "FAILED", "V3 остановлен; старый движок не запускался",
+                     code=error.code, failedStage=error.stage, failedSlide=error.slide)
+        _failure_file(log, row)
+        _progress(callback, 0, error.stage, str(error))
+        return json.dumps({"ok": False, "message": str(error), "code": error.code,
+                           "stage": error.stage, "log": str(log), "engine": ENGINE_ID},
+                          ensure_ascii=False)
+    except Exception as error:
+        row = {"ts": datetime.now(timezone.utc).isoformat(), "engine": ENGINE_ID,
+               "engineVersion": ENGINE_VERSION, "fallback": "DISABLED", "fallbackUsed": False,
+               "stage": "UNEXPECTED", "status": "FAIL", "code": "V3_UNEXPECTED",
+               "message": str(error), "exception": type(error).__name__,
+               "traceback": traceback.format_exc()}
+        logger.event("UNEXPECTED", "FAIL", str(error), code="V3_UNEXPECTED",
+                     traceback=traceback.format_exc())
+        logger.event("ENGINE", "FAILED", "V3 остановлен; старый движок не запускался",
+                     code="V3_UNEXPECTED")
+        _failure_file(log, row)
+        _progress(callback, 0, "UNEXPECTED", str(error))
+        return json.dumps({"ok": False, "message": str(error), "code": "V3_UNEXPECTED",
+                           "stage": "UNEXPECTED", "log": str(log), "engine": ENGINE_ID},
+                          ensure_ascii=False)
+    finally:
+        logger.close()
