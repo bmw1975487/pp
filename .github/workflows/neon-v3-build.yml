@@ -75,11 +75,23 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/sign-tools
           APK=v3project/v3test/build/outputs/apk/debug/v3test-debug.apk
+          ZIPALIGN="$ANDROID_HOME/build-tools/35.0.0/zipalign"
           test -s "$APK"
           cp "$APK" artifacts/Neon_V3_placeholder.apk
-          cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" artifacts/sign-tools/
+          cp "$ZIPALIGN" artifacts/sign-tools/
           cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" artifacts/sign-tools/
           chmod +x artifacts/sign-tools/zipalign
+          ldd "$ZIPALIGN" | tee artifacts/sign-tools/zipalign.ldd.txt
+          LIBCPP=$(ldd "$ZIPALIGN" | awk '/libc\+\+\.so/ {print $3; exit}')
+          test -n "$LIBCPP" -a -f "$LIBCPP"
+          cp -L "$LIBCPP" artifacts/sign-tools/libc++.so
+          for lib in libc++abi.so.1 libunwind.so.1; do
+            path=$(ldconfig -p | awk -v n="$lib" '$1 == n {print $NF; exit}')
+            if [ -n "$path" ] && [ -f "$path" ]; then
+              cp -L "$path" "artifacts/sign-tools/$lib"
+            fi
+          done
+          LD_LIBRARY_PATH="$PWD/artifacts/sign-tools" artifacts/sign-tools/zipalign -h >/dev/null
           sha256sum artifacts/Neon_V3_placeholder.apk > artifacts/placeholder.sha256.txt
           cat > artifacts/BUILD_INFO.txt <<EOF
           app=Neon V3
