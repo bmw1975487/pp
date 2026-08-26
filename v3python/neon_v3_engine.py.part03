@@ -1,0 +1,167 @@
+            if spec.role == "FOUR_IMAGES":
+                paths = []
+                for part in range(4):
+                    clone = SlideSpec(**{**spec.__dict__})
+                    clone.image_prompt = f"{spec.image_prompt}. Visual variant {part + 1} of 4."
+                    paths.append(str(_generate_image(
+                        clone, slide_no, output.parent, str(key), logger
+                    )))
+                spec.images = paths
+            else:
+                spec.images = [str(_generate_image(
+                    spec, slide_no, output.parent, str(key), logger
+                ))]
+
+        _progress(callback, 67, "PPTX_ASSEMBLE", "Собираю PPTX на новом шаблоне")
+        _remove_all_slides(prs)
+        contract_slides: List[Dict[str, Any]] = []
+        for slide_no, spec in enumerate(specs, 1):
+            contract_slides.append(_render_slide(prs, spec, slide_no, logger))
+            percent = 67 + int(slide_no * 23 / len(specs))
+            _progress(
+                callback, percent, "SLIDE_RENDER",
+                f"Собираю слайд {slide_no} из {len(specs)}",
+            )
+
+        logger.event("PPTX_SAVE", "START", "Сохраняю презентацию V3")
+        prs.save(str(output))
+        if not output.is_file() or output.stat().st_size < 4096:
+            raise EngineError(
+                "V3_PPTX_NOT_CREATED",
+                "После сохранения PPTX отсутствует или слишком мал",
+                stage="PPTX_SAVE",
+            )
+        logger.event(
+            "PPTX_SAVE", "PASS", "PPTX сохранён", bytes=output.stat().st_size,
+        )
+
+        contract = {
+            "schema": "nika.presentation.render-contract.v3",
+            "engine": ENGINE_ID,
+            "engineVersion": ENGINE_VERSION,
+            "fallback": "DISABLED",
+            "template": template.name,
+            "slideWidth": int(prs.slide_width),
+            "slideHeight": int(prs.slide_height),
+            "slides": contract_slides,
+        }
+        _add_render_contract(output, contract)
+        logger.event("CONTRACT_WRITE", "PASS", "Render contract V3 добавлен")
+
+        _progress(callback, 96, "OUTPUT_VALIDATE", "Проверяю готовую презентацию")
+        with zipfile.ZipFile(output, "r") as archive:
+            bad = archive.testzip()
+            if bad:
+                raise EngineError(
+                    "V3_ZIP_INTEGRITY",
+                    f"Повреждена ZIP-запись PPTX: {bad}",
+                    stage="OUTPUT_VALIDATE",
+                )
+            names = archive.namelist()
+            if "nika/render_contract.json" not in names:
+                raise EngineError(
+                    "V3_CONTRACT_MISSING",
+                    "В PPTX отсутствует render_contract.json",
+                    stage="OUTPUT_VALIDATE",
+                )
+            physical_slides = [
+                name for name in names
+                if re.fullmatch(r"ppt/slides/slide\d+\.xml", name)
+            ]
+            if len(physical_slides) != int(slide_count):
+                raise EngineError(
+                    "V3_OUTPUT_SLIDE_COUNT",
+                    f"В PPTX {len(physical_slides)} слайдов вместо {slide_count}",
+                    stage="OUTPUT_VALIDATE",
+                    detail={"actual": len(physical_slides), "expected": int(slide_count)},
+                )
+        logger.event(
+            "OUTPUT_VALIDATE", "PASS", "PPTX прошёл полную проверку",
+            bytes=output.stat().st_size, slideCount=int(slide_count),
+        )
+        logger.event(
+            "ENGINE", "READY", "Presentation V3 завершён",
+            output=str(output), fallbackUsed=False,
+        )
+        _progress(callback, 100, "READY", "Презентация V3 готова")
+        return json.dumps({
+            "ok": True,
+            "output": str(output),
+            "log": str(log),
+            "slides": int(slide_count),
+            "engine": ENGINE_ID,
+        }, ensure_ascii=False)
+
+    except EngineError as error:
+        row = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "engine": ENGINE_ID,
+            "engineVersion": ENGINE_VERSION,
+            "fallback": "DISABLED",
+            "fallbackUsed": False,
+            "stage": error.stage,
+            "status": "FAIL",
+            "code": error.code,
+            "slide": error.slide,
+            "role": error.role,
+            "message": str(error),
+            "detail": error.detail,
+            "exception": type(error).__name__,
+        }
+        logger.event(
+            error.stage, "FAIL", str(error), code=error.code,
+            slide=error.slide, role=error.role, detail=error.detail,
+            exception=type(error).__name__, fallbackUsed=False,
+        )
+        logger.event(
+            "ENGINE", "FAILED",
+            "V3 остановлен без запуска старого движка",
+            code=error.code, failedStage=error.stage,
+            failedSlide=error.slide, fallbackUsed=False,
+        )
+        _failure_file(log, row)
+        _progress(callback, 0, error.stage, str(error))
+        return json.dumps({
+            "ok": False,
+            "message": str(error),
+            "code": error.code,
+            "stage": error.stage,
+            "log": str(log),
+            "engine": ENGINE_ID,
+        }, ensure_ascii=False)
+    except Exception as error:
+        row = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "engine": ENGINE_ID,
+            "engineVersion": ENGINE_VERSION,
+            "fallback": "DISABLED",
+            "fallbackUsed": False,
+            "stage": "UNEXPECTED",
+            "status": "FAIL",
+            "code": "V3_UNEXPECTED",
+            "message": str(error),
+            "exception": type(error).__name__,
+            "traceback": traceback.format_exc(),
+        }
+        logger.event(
+            "UNEXPECTED", "FAIL", str(error), code="V3_UNEXPECTED",
+            exception=type(error).__name__, traceback=traceback.format_exc(),
+            fallbackUsed=False,
+        )
+        logger.event(
+            "ENGINE", "FAILED",
+            "V3 остановлен без запуска старого движка",
+            code="V3_UNEXPECTED", fallbackUsed=False,
+        )
+        _failure_file(log, row)
+        _progress(callback, 0, "UNEXPECTED", str(error))
+        return json.dumps({
+            "ok": False,
+            "message": str(error),
+            "code": "V3_UNEXPECTED",
+            "stage": "UNEXPECTED",
+            "log": str(log),
+            "engine": ENGINE_ID,
+        }, ensure_ascii=False)
+    finally:
+        logger.close()
