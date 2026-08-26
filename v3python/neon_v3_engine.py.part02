@@ -1,0 +1,292 @@
+            f"Файл изображения не найден: {image_path}",
+            stage="SLIDE_RENDER",
+            slide=slide_no,
+            role=role,
+        )
+    try:
+        placeholder = _placeholder_by_idx(slide, idx)
+    except KeyError as error:
+        raise EngineError(
+            "V3_PICTURE_PLACEHOLDER_MISSING",
+            f"Не найден placeholder изображения idx={idx}",
+            stage="SLIDE_RENDER",
+            slide=slide_no,
+            role=role,
+            detail={"placeholder": idx},
+        ) from error
+    if placeholder.placeholder_format.type != PP_PLACEHOLDER.PICTURE:
+        raise EngineError(
+            "V3_PLACEHOLDER_NOT_PICTURE",
+            f"Placeholder idx={idx} не является графическим",
+            stage="SLIDE_RENDER",
+            slide=slide_no,
+            role=role,
+            detail={"placeholder": idx},
+        )
+    try:
+        with Image.open(image_path) as image:
+            src_w, src_h = image.size
+    except Exception as error:
+        raise EngineError(
+            "V3_IMAGE_DECODE_FAILED",
+            f"Изображение не декодируется: {image_path.name}: {error}",
+            stage="SLIDE_RENDER",
+            slide=slide_no,
+            role=role,
+        ) from error
+    left, top, width, height = _contain_box(
+        src_w,
+        src_h,
+        int(placeholder.left),
+        int(placeholder.top),
+        int(placeholder.width),
+        int(placeholder.height),
+    )
+    element = placeholder._element
+    element.getparent().remove(element)
+    slide.shapes.add_picture(
+        str(image_path), Emu(left), Emu(top), Emu(width), Emu(height)
+    )
+
+
+def _validate_template(prs: Presentation) -> None:
+    if len(prs.slide_layouts) < 14:
+        raise EngineError(
+            "V3_TEMPLATE_LAYOUT_COUNT",
+            f"Ожидалось минимум 14 макетов, найдено {len(prs.slide_layouts)}",
+            stage="TEMPLATE_VALIDATE",
+        )
+    for role, layout_idx in LAYOUTS.items():
+        if layout_idx >= len(prs.slide_layouts):
+            raise EngineError(
+                "V3_LAYOUT_MISSING",
+                f"Для роли {role} отсутствует layout index={layout_idx}",
+                stage="TEMPLATE_VALIDATE",
+                role=role,
+            )
+        probe = prs.slides.add_slide(prs.slide_layouts[layout_idx])
+        ids: List[int] = []
+        for value in PLACEHOLDERS[role].values():
+            if isinstance(value, int):
+                ids.append(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, int):
+                        ids.append(item)
+                    elif isinstance(item, tuple):
+                        ids.extend(item)
+        present = {p.placeholder_format.idx for p in probe.placeholders}
+        missing = [idx for idx in ids if idx not in present]
+        sld_id = prs.slides._sldIdLst[-1]
+        prs.part.drop_rel(sld_id.rId)
+        prs.slides._sldIdLst.remove(sld_id)
+        if missing:
+            raise EngineError(
+                "V3_TEMPLATE_PLACEHOLDER_SET",
+                f"Макет {role} не содержит placeholder: {missing}",
+                stage="TEMPLATE_VALIDATE",
+                role=role,
+                detail={"missing": missing, "layoutIndex": layout_idx},
+            )
+
+
+def _render_slide(
+    prs: Presentation,
+    spec: SlideSpec,
+    slide_no: int,
+    logger: JsonlLogger,
+) -> Dict[str, Any]:
+    role = spec.role
+    if role not in LAYOUTS:
+        raise EngineError(
+            "V3_UNKNOWN_LAYOUT_ROLE",
+            f"Неизвестная роль слайда: {role}",
+            stage="SLIDE_RENDER",
+            slide=slide_no,
+            role=role,
+        )
+    logger.event(
+        "SLIDE_RENDER", "START", f"Собираю слайд {slide_no}: {role}",
+        slide=slide_no, role=role,
+    )
+    slide = prs.slides.add_slide(prs.slide_layouts[LAYOUTS[role]])
+    ph = PLACEHOLDERS[role]
+    if role == "COVER":
+        _set_text(slide, ph["title"], spec.title, slide_no, role)
+        _set_text(slide, ph["subtitle"], spec.subtitle, slide_no, role)
+    elif role == "CONTENTS":
+        _set_text(slide, ph["title"], spec.title, slide_no, role)
+        _set_text(slide, ph["section"], spec.section, slide_no, role)
+        _set_text(slide, ph["number"], spec.number, slide_no, role)
+        if len(spec.items) > 8:
+            raise EngineError(
+                "V3_CONTENTS_OVERFLOW",
+                f"Содержание содержит {len(spec.items)} пунктов, максимум 8",
+                stage="SLIDE_RENDER", slide=slide_no, role=role,
+            )
+        for pos, (title_idx, body_idx) in enumerate(ph["pairs"]):
+            item = spec.items[pos] if pos < len(spec.items) else {"title": "", "body": ""}
+            _set_text(slide, title_idx, item.get("title", ""), slide_no, role)
+            _set_text(slide, body_idx, item.get("body", ""), slide_no, role)
+    elif role == "SECTION_DIVIDER":
+        _set_text(slide, ph["title"], spec.title, slide_no, role)
+        _set_text(slide, ph["subtitle"], spec.subtitle, slide_no, role)
+        _set_text(slide, ph["number"], spec.number, slide_no, role)
+    elif role == "FOUR_CARDS":
+        _set_text(slide, ph["title"], spec.title, slide_no, role)
+        _set_text(slide, ph["section"], spec.section, slide_no, role)
+        _set_text(slide, ph["number"], spec.number, slide_no, role)
+        if len(spec.cards) != 4:
+            raise EngineError(
+                "V3_CARD_COUNT",
+                f"Для FOUR_CARDS требуется 4 карточки, найдено {len(spec.cards)}",
+                stage="SLIDE_RENDER", slide=slide_no, role=role,
+            )
+        for pos, (title_idx, body_idx) in enumerate(ph["cards"]):
+            card = spec.cards[pos]
+            _set_text(slide, title_idx, card.get("title", ""), slide_no, role)
+            _set_text(slide, body_idx, card.get("body", ""), slide_no, role)
+    elif role == "TEXT_WIDE":
+        for key in ("title", "lead", "body", "section", "number"):
+            _set_text(slide, ph[key], getattr(spec, key), slide_no, role)
+    elif role in ("IMAGE_RIGHT", "IMAGE_BOTTOM", "IMAGE_LEFT"):
+        for key in ("title", "lead", "body", "section"):
+            if key in ph:
+                _set_text(slide, ph[key], getattr(spec, key), slide_no, role)
+        if "number" in ph:
+            _set_text(slide, ph["number"], spec.number, slide_no, role)
+        if len(spec.images) != 1:
+            raise EngineError(
+                "V3_IMAGE_COUNT",
+                f"Для {role} требуется ровно 1 изображение",
+                stage="SLIDE_RENDER", slide=slide_no, role=role,
+            )
+        _insert_picture(slide, ph["image"], Path(spec.images[0]), slide_no, role)
+    elif role == "FOUR_IMAGES":
+        for key in ("title", "lead", "body", "section", "number"):
+            _set_text(slide, ph[key], getattr(spec, key), slide_no, role)
+        if len(spec.images) != 4:
+            raise EngineError(
+                "V3_IMAGE_COUNT",
+                "Для FOUR_IMAGES требуется ровно 4 изображения",
+                stage="SLIDE_RENDER", slide=slide_no, role=role,
+            )
+        for idx, path in zip(ph["images"], spec.images):
+            _insert_picture(slide, idx, Path(path), slide_no, role)
+    logger.event(
+        "SLIDE_RENDER", "PASS", f"Слайд {slide_no} собран",
+        slide=slide_no, role=role,
+    )
+    return {
+        "number": slide_no,
+        "role": role,
+        "title": spec.title,
+        "section": spec.section,
+        "images": [Path(x).name for x in spec.images],
+        "engine": ENGINE_ID,
+    }
+
+
+def _add_render_contract(pptx_path: Path, contract: Dict[str, Any]) -> None:
+    temporary = pptx_path.with_suffix(".contract.tmp.pptx")
+    with zipfile.ZipFile(pptx_path, "r") as source, zipfile.ZipFile(
+        temporary, "w", zipfile.ZIP_DEFLATED
+    ) as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "[Content_Types].xml" and b'Extension="json"' not in data:
+                marker = b"</Types>"
+                addition = (
+                    b'<Default Extension="json" ContentType="application/json"/>'
+                    + marker
+                )
+                data = data.replace(marker, addition)
+            target.writestr(item, data)
+        target.writestr(
+            "nika/render_contract.json",
+            json.dumps(contract, ensure_ascii=False, indent=2).encode("utf-8"),
+        )
+    temporary.replace(pptx_path)
+
+
+def _failure_file(log_path: Path, row: Dict[str, Any]) -> None:
+    try:
+        target = log_path.with_name("presentation_v3_failure.json")
+        target.write_text(json.dumps(row, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def run_engine(
+    template_path: str,
+    output_path: str,
+    log_path: str,
+    topic: str,
+    slide_count: int,
+    key: str,
+    callback: Any,
+) -> str:
+    template = Path(template_path)
+    output = Path(output_path)
+    log = Path(log_path)
+    logger = JsonlLogger(log)
+    try:
+        logger.event(
+            "ENGINE", "START", "Запуск независимого Presentation V3",
+            template=str(template), output=str(output), topic=topic,
+            slideCount=int(slide_count), fallbackUsed=False,
+        )
+        _progress(callback, 2, "ENGINE", "Проверяю новый шаблон")
+        if not template.is_file():
+            raise EngineError(
+                "V3_TEMPLATE_MISSING",
+                f"Новый шаблон не найден: {template}",
+                stage="TEMPLATE_LOAD",
+            )
+        if not (5 <= int(slide_count) <= 20):
+            raise EngineError(
+                "V3_SLIDE_COUNT_RANGE",
+                "Допустимо от 5 до 20 слайдов",
+                stage="REQUEST_VALIDATE",
+            )
+        if not str(key).startswith("sk-") or len(str(key)) != 35:
+            raise EngineError(
+                "V3_ROUTER_KEY_INVALID",
+                "Рабочий RouterAI-ключ не найден",
+                stage="AUTH",
+            )
+
+        prs = Presentation(str(template))
+        logger.event(
+            "TEMPLATE_LOAD", "PASS", "Новый шаблон открыт",
+            layouts=len(prs.slide_layouts), prototypes=len(prs.slides),
+        )
+        _validate_template(prs)
+        logger.event(
+            "TEMPLATE_VALIDATE", "PASS",
+            "Все V3-макеты и placeholders подтверждены",
+        )
+
+        _progress(callback, 8, "PLAN_CREATE", "Формирую содержание презентации")
+        logger.event("PLAN_CREATE", "START", "Запрашиваю единый план V3")
+        plan = _create_content_plan(str(topic), int(slide_count), str(key))
+        specs = _build_specs(plan, str(topic), int(slide_count))
+        logger.event(
+            "PLAN_CREATE", "PASS", "План V3 принят",
+            slideCount=len(specs), roles=[s.role for s in specs],
+        )
+
+        output.parent.mkdir(parents=True, exist_ok=True)
+        image_positions = [
+            (index, spec)
+            for index, spec in enumerate(specs, 1)
+            if spec.role in ("IMAGE_RIGHT", "IMAGE_BOTTOM", "IMAGE_LEFT", "FOUR_IMAGES")
+        ]
+        for image_pos, (slide_no, spec) in enumerate(image_positions, 1):
+            start = 16
+            span = 48
+            percent = start + int((image_pos - 1) * span / max(1, len(image_positions)))
+            _progress(
+                callback, percent, "IMAGE_GENERATE",
+                f"Создаю иллюстрацию {image_pos} из {len(image_positions)}",
+            )
