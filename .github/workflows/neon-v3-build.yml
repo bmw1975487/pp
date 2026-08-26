@@ -91,7 +91,7 @@ jobs:
               cp -L "$path" "artifacts/sign-tools/$lib"
             fi
           done
-          LD_LIBRARY_PATH="$PWD/artifacts/sign-tools" artifacts/sign-tools/zipalign -h >/dev/null
+          LD_LIBRARY_PATH="$PWD/artifacts/sign-tools" artifacts/sign-tools/zipalign -c 4 "$APK"
           sha256sum artifacts/Neon_V3_placeholder.apk > artifacts/placeholder.sha256.txt
           cat > artifacts/BUILD_INFO.txt <<EOF
           app=Neon V3
