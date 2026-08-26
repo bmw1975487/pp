@@ -50,7 +50,7 @@ chaquopy {
         buildPython 'python3.10'
         pip {
             install 'python-pptx==1.0.2'
-            install 'Pillow==11.3.0'
+            install 'Pillow==11.0.0'
         }
     }
 }
