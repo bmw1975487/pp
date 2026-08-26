@@ -1,0 +1,25 @@
+name: Neon V3 Android Build
+
+on:
+  push:
+    branches:
+      - build/neon-v3-test
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke
+        run: |
+          mkdir -p artifacts
+          printf 'Neon V3 builder is alive\n' > artifacts/smoke.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neon-v3-smoke
+          path: artifacts/
+          if-no-files-found: error
