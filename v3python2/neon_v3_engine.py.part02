@@ -1,0 +1,177 @@
+                     valign=MSO_ANCHOR.MIDDLE)
+    elif role == "SECTION_DIVIDER":
+        _textbox(slide, 1.0, 1.55, 10.9, 1.7, spec.title, 33, WHITE, True,
+                 PP_ALIGN.CENTER, MSO_ANCHOR.MIDDLE)
+        _textbox(slide, 2.0, 3.55, 8.9, 1.0, spec.subtitle, 16, CYAN, False,
+                 PP_ALIGN.CENTER)
+        line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,
+                                      Inches(1.3), Inches(5.55), Inches(10.4), Inches(0.025))
+        line.fill.solid(); line.fill.fore_color.rgb = MUTED; line.line.fill.background()
+    elif role == "FOUR_CARDS":
+        _textbox(slide, 0.95, 0.95, 11.1, 0.8, spec.title, 25, WHITE, True)
+        for pos, card in enumerate(spec.cards[:4]):
+            col, row = pos % 2, pos // 2
+            x, y = 0.95 + col * 6.05, 2.0 + row * 2.15
+            _rounded(slide, x, y, 5.45, 1.72, NAVY_2, CYAN, 15)
+            _textbox(slide, x + 0.28, y + 0.22, 4.9, 0.42,
+                     card.get("title", ""), 15, CYAN, True)
+            _textbox(slide, x + 0.28, y + 0.76, 4.9, 0.72,
+                     card.get("body", ""), 11.5, WHITE)
+    elif role == "TEXT_WIDE":
+        _textbox(slide, 0.95, 0.95, 11.2, 0.85, spec.title, 27, WHITE, True)
+        _textbox(slide, 0.98, 1.95, 10.8, 0.7, spec.lead, 16, CYAN, True)
+        _rounded(slide, 0.95, 2.85, 11.25, 3.2, NAVY_2, NAVY_2, 30)
+        _textbox(slide, 1.25, 3.15, 10.6, 2.55, spec.body, 15, WHITE)
+    elif role in ("IMAGE_RIGHT", "IMAGE_LEFT"):
+        image_left = 7.65 if role == "IMAGE_RIGHT" else 0.85
+        text_left = 0.95 if role == "IMAGE_RIGHT" else 6.05
+        _textbox(slide, text_left, 0.95, 5.8, 0.9, spec.title, 25, WHITE, True)
+        _textbox(slide, text_left, 1.95, 5.5, 0.7, spec.lead, 14.5, CYAN, True)
+        _textbox(slide, text_left, 2.85, 5.5, 2.8, spec.body, 13.5, WHITE)
+        if len(spec.images) != 1:
+            raise EngineError("V3_IMAGE_COUNT", f"Для {role} требуется одно изображение",
+                              stage="SLIDE_RENDER", slide=slide_no, role=role)
+        _add_picture_contain(slide, Path(spec.images[0]), image_left, 1.15, 4.65, 5.25)
+    elif role == "IMAGE_BOTTOM":
+        _textbox(slide, 0.95, 0.9, 11.0, 0.75, spec.title, 25, WHITE, True)
+        _textbox(slide, 0.98, 1.72, 10.8, 0.5, spec.lead, 14.5, CYAN, True)
+        if len(spec.images) != 1:
+            raise EngineError("V3_IMAGE_COUNT", "Для IMAGE_BOTTOM требуется одно изображение",
+                              stage="SLIDE_RENDER", slide=slide_no, role=role)
+        _add_picture_contain(slide, Path(spec.images[0]), 1.15, 2.25, 11.0, 4.1)
+    else:
+        raise EngineError("V3_UNKNOWN_LAYOUT_ROLE", f"Неизвестная роль: {role}",
+                          stage="SLIDE_RENDER", slide=slide_no, role=role)
+    logger.event("SLIDE_RENDER", "PASS", f"Слайд {slide_no} собран",
+                 slide=slide_no, role=role)
+    return {"number": slide_no, "role": role, "title": spec.title,
+            "section": spec.section,
+            "images": [Path(x).name for x in spec.images], "engine": ENGINE_ID}
+
+
+def _add_render_contract(pptx_path: Path, contract: Dict[str, Any]) -> None:
+    temporary = pptx_path.with_suffix(".contract.tmp.pptx")
+    with zipfile.ZipFile(pptx_path, "r") as source, \
+            zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "[Content_Types].xml" and b'Extension="json"' not in data:
+                data = data.replace(b"</Types>",
+                    b'<Default Extension="json" ContentType="application/json"/></Types>')
+            target.writestr(item, data)
+        target.writestr("nika/render_contract.json",
+                        json.dumps(contract, ensure_ascii=False, indent=2).encode("utf-8"))
+    temporary.replace(pptx_path)
+
+
+def _failure_file(log_path: Path, row: Dict[str, Any]) -> None:
+    try:
+        log_path.with_name("presentation_v3_failure.json").write_text(
+            json.dumps(row, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def run_engine(template_path: str, output_path: str, log_path: str,
+               topic: str, slide_count: int, key: str, callback: Any) -> str:
+    output, log = Path(output_path), Path(log_path)
+    logger = JsonlLogger(log)
+    try:
+        logger.event("ENGINE", "START", "Запуск независимого Presentation V3",
+                     visualSystem="CODED_FROM_V3_TEMPLATE", topic=topic,
+                     slideCount=int(slide_count))
+        if not (5 <= int(slide_count) <= 20):
+            raise EngineError("V3_SLIDE_COUNT_RANGE", "Допустимо от 5 до 20 слайдов",
+                              stage="REQUEST_VALIDATE")
+        if not str(key).startswith("sk-") or len(str(key)) != 35:
+            raise EngineError("V3_ROUTER_KEY_INVALID", "Рабочий RouterAI-ключ не найден",
+                              stage="AUTH")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        bg = output.parent / "neon_v3_background.png"
+        _progress(callback, 2, "VISUAL_SYSTEM", "Подготавливаю новый шаблон V3")
+        _gradient_background(bg)
+        logger.event("VISUAL_SYSTEM", "PASS", "V3-шаблон собран из нового дизайн-контракта",
+                     background=str(bg), fallbackUsed=False)
+
+        _progress(callback, 8, "PLAN_CREATE", "Формирую содержание презентации")
+        plan = _create_content_plan(str(topic), int(slide_count), str(key))
+        specs = _build_specs(plan, str(topic), int(slide_count))
+        logger.event("PLAN_CREATE", "PASS", "План V3 принят",
+                     slideCount=len(specs), roles=[s.role for s in specs])
+
+        image_specs = [(i, s) for i, s in enumerate(specs, 1)
+                       if s.role in ("COVER", "IMAGE_RIGHT", "IMAGE_LEFT", "IMAGE_BOTTOM")]
+        for pos, (slide_no, spec) in enumerate(image_specs, 1):
+            _progress(callback, 14 + int((pos - 1) * 48 / max(1, len(image_specs))),
+                      "IMAGE_GENERATE", f"Создаю иллюстрацию {pos} из {len(image_specs)}")
+            spec.images = [str(_generate_image(spec, slide_no, output.parent,
+                                               str(key), logger))]
+
+        _progress(callback, 66, "PPTX_ASSEMBLE", "Собираю презентацию в новом стиле")
+        prs = Presentation()
+        prs.slide_width = Inches(13.333333)
+        prs.slide_height = Inches(7.5)
+        for slide_no, spec in enumerate(specs, 1):
+            _render_slide(prs, spec, slide_no, bg, logger)
+            _progress(callback, 66 + int(slide_no * 25 / len(specs)),
+                      "SLIDE_RENDER", f"Собираю слайд {slide_no} из {len(specs)}")
+        prs.save(str(output))
+        if not output.is_file() or output.stat().st_size < 4096:
+            raise EngineError("V3_PPTX_NOT_CREATED", "PPTX не создан",
+                              stage="PPTX_SAVE")
+
+        contract = {"schema": "nika.presentation.render-contract.v3",
+                    "engine": ENGINE_ID, "engineVersion": ENGINE_VERSION,
+                    "fallback": "DISABLED", "visualSystem": "CODED_FROM_V3_TEMPLATE",
+                    "slideWidth": int(prs.slide_width),
+                    "slideHeight": int(prs.slide_height),
+                    "slides": [{"number": i, "role": s.role, "title": s.title,
+                                "section": s.section,
+                                "images": [Path(x).name for x in s.images]}
+                               for i, s in enumerate(specs, 1)]}
+        _add_render_contract(output, contract)
+        _progress(callback, 96, "OUTPUT_VALIDATE", "Проверяю готовую презентацию")
+        with zipfile.ZipFile(output, "r") as archive:
+            bad = archive.testzip()
+            names = archive.namelist()
+            physical = [x for x in names if re.fullmatch(r"ppt/slides/slide\d+\.xml", x)]
+            if bad:
+                raise EngineError("V3_ZIP_INTEGRITY", f"Повреждена запись: {bad}",
+                                  stage="OUTPUT_VALIDATE")
+            if "nika/render_contract.json" not in names:
+                raise EngineError("V3_CONTRACT_MISSING", "Нет render contract",
+                                  stage="OUTPUT_VALIDATE")
+            if len(physical) != int(slide_count):
+                raise EngineError("V3_OUTPUT_SLIDE_COUNT",
+                                  f"В PPTX {len(physical)} слайдов вместо {slide_count}",
+                                  stage="OUTPUT_VALIDATE")
+        logger.event("ENGINE", "READY", "Presentation V3 завершён",
+                     output=str(output), bytes=output.stat().st_size)
+        _progress(callback, 100, "READY", "Презентация V3 готова")
+        return json.dumps({"ok": True, "output": str(output), "log": str(log),
+                           "slides": int(slide_count), "engine": ENGINE_ID},
+                          ensure_ascii=False)
+    except EngineError as error:
+        row = {"ts": datetime.now(timezone.utc).isoformat(), "engine": ENGINE_ID,
+               "engineVersion": ENGINE_VERSION, "fallback": "DISABLED",
+               "fallbackUsed": False, "stage": error.stage, "status": "FAIL",
+               "code": error.code, "slide": error.slide, "role": error.role,
+               "message": str(error), "detail": error.detail,
+               "exception": type(error).__name__}
+        logger.event(error.stage, "FAIL", str(error), code=error.code,
+                     slide=error.slide, role=error.role, detail=error.detail)
+        logger.event("ENGINE", "FAILED", "V3 остановлен без запуска старого движка",
+                     code=error.code, failedStage=error.stage, failedSlide=error.slide)
+        _failure_file(log, row)
+        _progress(callback, 0, error.stage, str(error))
+        return json.dumps({"ok": False, "message": str(error), "code": error.code,
+                           "stage": error.stage, "log": str(log),
+                           "engine": ENGINE_ID}, ensure_ascii=False)
+    except Exception as error:
+        row = {"ts": datetime.now(timezone.utc).isoformat(), "engine": ENGINE_ID,
+               "engineVersion": ENGINE_VERSION, "fallback": "DISABLED",
+               "fallbackUsed": False, "stage": "UNEXPECTED", "status": "FAIL",
+               "code": "V3_UNEXPECTED", "message": str(error),
+               "exception": type(error).__name__, "traceback": traceback.format_exc()}
+        logger.event("UNEXPECTED", "FAIL", str(error), code="V3_UNEXPECTED",
+                     traceback=traceback.format_exc())
