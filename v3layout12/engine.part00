@@ -1,0 +1,256 @@
+"""Neon Presentation V3 engine: text -> layout -> image geometry -> images -> PPTX.
+
+This engine is intentionally independent from the legacy Presentation engine.
+It uses the uploaded V3 PowerPoint template as the only visual source of truth.
+There is no fallback to the old engine.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import math
+import re
+import traceback
+import urllib.error
+import urllib.request
+import zipfile
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from fractions import Fraction
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from PIL import Image, ImageOps
+from pptx import Presentation
+from pptx.enum.shapes import PP_PLACEHOLDER
+
+ENGINE_ID = "neon.presentation.parallel.v3"
+ENGINE_VERSION = "1.2.0"
+CHAT_ENDPOINT = "https://routerai.ru/api/v1/chat/completions"
+IMAGE_ENDPOINT = "https://routerai.ru/api/v1/images"
+CHAT_MODEL = "deepseek/deepseek-v4-flash"
+IMAGE_MODEL = "recraft/recraft-v4.1-utility"
+
+LAYOUT_NAMES = {
+    "COVER": "Титульный слайд",
+    "CONTENTS": "Содержание с номерами",
+    "SECTION_DIVIDER": "Разделитель",
+    "FOUR_CARDS": "С иконками",
+    "TEXT_WIDE": "С заголовоком + широкий текст",
+    "IMAGE_RIGHT": "Рисунок 1",
+    "IMAGE_BOTTOM": "Рисунок 2",
+    "IMAGE_LEFT": "Фотография 1",
+    "FOUR_IMAGES": "Несколько рисунков",
+}
+
+IMAGE_PLACEHOLDERS = {
+    "IMAGE_RIGHT": [11],
+    "IMAGE_BOTTOM": [11],
+    "IMAGE_LEFT": [11],
+    "FOUR_IMAGES": [12, 17, 13, 14],
+}
+
+ROLE_BODY_LIMIT = {
+    "FOUR_CARDS": 760,
+    "TEXT_WIDE": 1250,
+    "IMAGE_RIGHT": 850,
+    "IMAGE_BOTTOM": 650,
+    "IMAGE_LEFT": 760,
+    "FOUR_IMAGES": 620,
+}
+
+HERO_IMAGE_CONTRACT = (
+    "Create a premium photorealistic corporate illustration for a business "
+    "presentation. The visual must express the exact slide meaning, not a "
+    "generic stock metaphor. Use the Neon material language: transparent or "
+    "smoked glass, silver/steel/chrome structural metal, glossy white, navy "
+    "and blue enamel, controlled cyan light. No gold, bronze, wood, stone, "
+    "paper, fabric, random props, text, letters, numbers, logos, UI, charts, "
+    "arrows or infographics unless the brief explicitly asks for a diagram. "
+    "No room or decorative backdrop. Keep the important subject inside safe "
+    "margins so it survives exact placeholder cropping. "
+)
+
+
+class EngineError(RuntimeError):
+    def __init__(self, code: str, message: str, *, stage: str,
+                 slide: Optional[int] = None, role: Optional[str] = None,
+                 detail: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.code = code
+        self.stage = stage
+        self.slide = slide
+        self.role = role
+        self.detail = detail or {}
+
+
+class JsonlLogger:
+    def __init__(self, path: Path):
+        self.path = path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = path.open("w", encoding="utf-8")
+
+    def event(self, stage: str, status: str, message: str, **extra: Any) -> None:
+        row: Dict[str, Any] = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "engine": ENGINE_ID,
+            "engineVersion": ENGINE_VERSION,
+            "fallback": "DISABLED",
+            "fallbackUsed": False,
+            "stage": stage,
+            "status": status,
+            "message": message,
+        }
+        row.update({k: v for k, v in extra.items() if v is not None})
+        self._fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        self._fh.flush()
+
+    def close(self) -> None:
+        try:
+            self._fh.close()
+        except Exception:
+            pass
+
+
+@dataclass
+class ImageSlot:
+    placeholder_idx: int
+    x_emu: int
+    y_emu: int
+    width_emu: int
+    height_emu: int
+    width_in: float
+    height_in: float
+    exact_ratio: float
+    requested_ratio: str
+    prompt: str = ""
+    path: str = ""
+
+
+@dataclass
+class SlideSpec:
+    role: str
+    title: str = ""
+    subtitle: str = ""
+    lead: str = ""
+    body: str = ""
+    section: str = ""
+    number: str = ""
+    points: List[Dict[str, str]] = field(default_factory=list)
+    contents: List[Dict[str, str]] = field(default_factory=list)
+    image_slots: List[ImageSlot] = field(default_factory=list)
+
+
+def _progress(callback: Any, percent: int, stage: str, message: str) -> None:
+    try:
+        callback.onProgress(int(percent), str(stage), str(message))
+    except Exception:
+        pass
+
+
+def _clean(value: Any, maximum: int) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()[:maximum].rstrip()
+
+
+def _body(value: Any, maximum: int = 1050) -> str:
+    text = str(value or "").replace("\r", "").strip()
+    paras = [re.sub(r"\s+", " ", x).strip() for x in text.split("\n") if x.strip()]
+    if len(paras) <= 1:
+        sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", " ".join(paras)) if x.strip()]
+        if len(sentences) >= 4:
+            step = max(1, math.ceil(len(sentences) / 3))
+            paras = [" ".join(sentences[i:i + step]) for i in range(0, len(sentences), step)]
+    return "\n\n".join(paras[:3])[:maximum].rstrip()
+
+
+def _points(raw: Any, body: str) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
+    if isinstance(raw, list):
+        for item in raw[:4]:
+            if isinstance(item, dict):
+                out.append({
+                    "title": _clean(item.get("title"), 42),
+                    "body": _clean(item.get("body"), 150),
+                })
+    sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", body.replace("\n", " ")) if x.strip()]
+    fallback_titles = ["Контекст", "Механизм", "Эффект", "Контроль"]
+    while len(out) < 4:
+        pos = len(out)
+        out.append({
+            "title": fallback_titles[pos],
+            "body": _clean(sentences[pos] if pos < len(sentences) else "Практический элемент решения", 150),
+        })
+    return out[:4]
+
+
+def _read_response(response: Any, maximum: int) -> bytes:
+    chunks: List[bytes] = []
+    total = 0
+    while True:
+        part = response.read(64 * 1024)
+        if not part:
+            break
+        total += len(part)
+        if total > maximum:
+            raise EngineError("V3_HTTP_RESPONSE_TOO_LARGE",
+                              f"Ответ сервиса превышает {maximum} байт", stage="NETWORK")
+        chunks.append(part)
+    return b"".join(chunks)
+
+
+def _post_json(endpoint: str, payload: Dict[str, Any], key: str,
+               timeout: int, maximum: int) -> Dict[str, Any]:
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": "Bearer " + key,
+            "Content-Type": "application/json; charset=utf-8",
+            "Accept": "application/json",
+            "Accept-Encoding": "identity",
+            "User-Agent": "Neon-V3-Android/1.1",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = _read_response(response, maximum)
+    except urllib.error.HTTPError as error:
+        try:
+            detail = _read_response(error, 1024 * 1024).decode("utf-8", "replace")[:1600]
+        except Exception:
+            detail = ""
+        raise EngineError("V3_HTTP_ERROR", f"RouterAI HTTP {error.code}: {detail}",
+                          stage="NETWORK", detail={"endpoint": endpoint, "httpStatus": error.code}) from error
+    except Exception as error:
+        raise EngineError("V3_NETWORK_FAILED", f"Ошибка RouterAI: {error}",
+                          stage="NETWORK", detail={"endpoint": endpoint}) from error
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except Exception as error:
+        raise EngineError("V3_HTTP_JSON_INVALID", "Ответ RouterAI не является JSON",
+                          stage="NETWORK") from error
+
+
+def _download_image(url: str) -> bytes:
+    if not url.startswith("https://"):
+        raise EngineError("V3_IMAGE_URL_INVALID", "Небезопасный URL изображения",
+                          stage="IMAGE_GENERATE")
+    try:
+        request = urllib.request.Request(url, headers={
+            "Accept-Encoding": "identity", "User-Agent": "Neon-V3-Android/1.1"})
+        with urllib.request.urlopen(request, timeout=180) as response:
+            return _read_response(response, 40 * 1024 * 1024)
+    except EngineError:
+        raise
+    except Exception as error:
+        raise EngineError("V3_IMAGE_DOWNLOAD_FAILED", f"Не удалось скачать изображение: {error}",
+                          stage="IMAGE_GENERATE") from error
+
+
+def _extract_json(text: str) -> Dict[str, Any]:
+    source = (text or "").strip()
+    source = re.sub(r"^```(?:json)?\s*", "", source, flags=re.I)
+    source = re.sub(r"\s*```$", "", source)
+    first, last = source.find("{"), source.rfind("}")
+    if first < 0 or last <= first:
