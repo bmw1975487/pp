@@ -5,10 +5,7 @@ on:
     branches:
       - build/neon-v3-test
     paths:
-      - v3-build-trigger.txt
-      - v3engine/**
-      - v3project/**
-      - .github/workflows/neon-v3-build.yml
+      - v3layout12/trigger.txt
   workflow_dispatch:
 
 permissions:
@@ -20,6 +17,7 @@ jobs:
     timeout-minutes: 60
     env:
       GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
+      TEMPLATE_SHA256: a05d2a799c976f4cbf56472ae10b55c0979a20a8483794923a41089cb97d969a
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,6 +38,7 @@ jobs:
 
       - name: Install Android platform
         run: |
+          set -euo pipefail
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
 
@@ -48,61 +47,122 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Restore V3 engine and template contract
+      - name: Restore V3 1.2 engine and uploaded template
         run: |
           set -euo pipefail
-          python3 -m pip install --quiet python-pptx==1.0.2
-          mkdir -p v3project/v3test/src/main/python v3project/v3test/src/main/assets
-          base64 --decode v3engine/neon_v3_engine.py.gz.b64 | gzip -dc > v3project/v3test/src/main/python/neon_v3_engine.py
-          python3 -m py_compile v3project/v3test/src/main/python/neon_v3_engine.py
-          grep -F 'ENGINE_VERSION = "1.1.0"' v3project/v3test/src/main/python/neon_v3_engine.py
-          grep -F 'planningMode="TEXT_FIRST"' v3project/v3test/src/main/python/neon_v3_engine.py
-          grep -F '"FOUR_IMAGES"' v3project/v3test/src/main/python/neon_v3_engine.py
-          grep -F 'IMAGE_SLOTS' v3project/v3test/src/main/python/neon_v3_engine.py
-          ! grep -F 'runOldEngine' v3project/v3test/src/main/python/neon_v3_engine.py
-          python3 - <<'PY'
-          from pptx import Presentation
-          from pptx.util import Inches
-          p='v3project/v3test/src/main/assets/presentation_template_v3.pptx'
-          prs=Presentation()
-          prs.slide_width=Inches(13.333333)
-          prs.slide_height=Inches(7.5)
-          # Nine physical V3 roles: cover, contents, section, cards, text,
-          # image-right, image-bottom, image-left, four-images.
-          while len(prs.slides) < 9:
-              prs.slides.add_slide(prs.slide_layouts[6])
-          prs.save(p)
-          PY
-          unzip -tq v3project/v3test/src/main/assets/presentation_template_v3.pptx
+          PY=v3project/v3test/src/main/python
+          ASSETS=v3project/v3test/src/main/assets
+          mkdir -p "$PY" "$ASSETS"
+          cat v3layout12/engine.part00 v3layout12/engine.part01 v3layout12/engine.part02 v3layout12/engine.part03 > "$PY/neon_v3_engine.py"
+          base64 --decode v3layout12/template.part00 > "$ASSETS/presentation_template_v3.pptx"
+          python3 -m py_compile "$PY/neon_v3_engine.py"
+          grep -F 'ENGINE_VERSION = "1.2.0"' "$PY/neon_v3_engine.py"
+          grep -F 'TEXT_PLAN' "$PY/neon_v3_engine.py" >/dev/null
+          grep -F 'LAYOUT_PLAN' "$PY/neon_v3_engine.py" >/dev/null
+          grep -F 'IMAGE_GENERATE' "$PY/neon_v3_engine.py" >/dev/null
+          grep -F '"fallback": "DISABLED"' "$PY/neon_v3_engine.py"
+          ! grep -F 'runOldEngine' "$PY/neon_v3_engine.py"
+          ACTUAL=$(sha256sum "$ASSETS/presentation_template_v3.pptx" | awk '{print $1}')
+          test "$ACTUAL" = "$TEMPLATE_SHA256"
+          unzip -tq "$ASSETS/presentation_template_v3.pptx"
 
-      - name: Build Neon V3 debug APK
+      - name: Verify V3 text-first planner and every new template layout
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet python-pptx==1.0.2 Pillow==11.3.0
+          python3 - <<'PY'
+          import importlib.util
+          from pptx import Presentation
+
+          path='v3project/v3test/src/main/python/neon_v3_engine.py'
+          spec=importlib.util.spec_from_file_location('v3', path)
+          v3=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(v3)
+
+          prs=Presentation('v3project/v3test/src/main/assets/presentation_template_v3.pptx')
+          layouts=v3._template_layouts(prs)
+          required={'COVER','CONTENTS','SECTION_DIVIDER','FOUR_CARDS','TEXT_WIDE','IMAGE_RIGHT','IMAGE_BOTTOM','IMAGE_LEFT','FOUR_IMAGES'}
+          assert set(layouts) == required, (set(layouts), required)
+          assert len(prs.slides) >= 9
+
+          bodies=[
+              'A'*340, 'B'*460, 'C'*700, 'D'*820,
+              'E'*520, 'F'*610, 'G'*900, 'H'*740,
+          ]
+          rows=[]
+          for i,b in enumerate(bodies):
+              rows.append({
+                  'section':'Раздел 1' if i < 4 else 'Раздел 2',
+                  'title':f'Слайд {i+1}',
+                  'lead':'Ключевая мысль',
+                  'body':b,
+                  'points':[{'title':f'P{j+1}','body':'Краткое объяснение'} for j in range(4)],
+              })
+          plan={'presentationTitle':'Тест','presentationSubtitle':'V3','slides':rows,'_dividerCount':2}
+          class Logger:
+              def event(self,*args,**kwargs): pass
+          specs=v3._build_specs(plan,'Тест',12,layouts,Logger())
+          roles=[x.role for x in specs]
+          assert len(specs) == 12, roles
+          assert required.issubset(set(roles)), roles
+          assert any(x.role == 'TEXT_WIDE' for x in specs)
+          assert any(x.role == 'FOUR_CARDS' for x in specs)
+          assert any(x.image_slots for x in specs)
+          for slide in specs:
+              for slot in slide.image_slots:
+                  assert slot.width_emu > 0 and slot.height_emu > 0
+                  assert slot.width_in > 0 and slot.height_in > 0
+                  assert slot.exact_ratio > 0
+          print('V3 dry-plan PASS:', roles)
+          PY
+
+      - name: Set V3 app version
+        run: |
+          set -euo pipefail
+          FILE=v3project/v3test/build.gradle
+          sed -i 's/versionCode 2/versionCode 3/' "$FILE"
+          sed -i "s/versionName '1.0.0-v3'/versionName '1.2.0-v3'/" "$FILE"
+          grep -F 'versionCode 3' "$FILE"
+          grep -F "versionName '1.2.0-v3'" "$FILE"
+
+      - name: Build Neon V3 1.2 debug APK
         working-directory: v3project
         run: |
           set -euo pipefail
           gradle --no-daemon :v3test:assembleDebug --stacktrace
 
-      - name: Verify and prepare artifact
+      - name: Verify and prepare APK artifact
         run: |
           set -euo pipefail
-          APK='v3project/v3test/build/outputs/apk/debug/v3test-debug.apk'
+          APK=v3project/v3test/build/outputs/apk/debug/v3test-debug.apk
           test -s "$APK"
           unzip -tq "$APK"
           mkdir -p artifacts
-          cp "$APK" artifacts/Neon_V3_1.1.apk
-          sha256sum artifacts/Neon_V3_1.1.apk | tee artifacts/Neon_V3_1.1.sha256.txt
-          printf 'source_commit=%s\n' "$GITHUB_SHA" > artifacts/BUILD_INFO.txt
-          printf 'package=ru.nika.v3test\n' >> artifacts/BUILD_INFO.txt
-          printf 'engine=neon.presentation.parallel.v3\n' >> artifacts/BUILD_INFO.txt
-          printf 'engine_version=1.1.0\n' >> artifacts/BUILD_INFO.txt
-          printf 'logic=TEXT_FIRST_LAYOUTS_SECOND_IMAGES_THIRD\n' >> artifacts/BUILD_INFO.txt
-          printf 'fallback=DISABLED\n' >> artifacts/BUILD_INFO.txt
-          printf 'final_actions=OPEN,SEND\n' >> artifacts/BUILD_INFO.txt
-          unzip -l artifacts/Neon_V3_1.1.apk | grep -E 'classes.*dex|neon_v3_engine|presentation_template_v3'
+          cp "$APK" artifacts/Neon_V3.apk
+          unzip -p artifacts/Neon_V3.apk assets/presentation_template_v3.pptx > artifacts/template_from_apk.pptx
+          test "$(sha256sum artifacts/template_from_apk.pptx | awk '{print $1}')" = "$TEMPLATE_SHA256"
+          unzip -tq artifacts/template_from_apk.pptx
+          sha256sum artifacts/Neon_V3.apk | tee artifacts/Neon_V3.sha256.txt
+          cat > artifacts/BUILD_INFO.txt <<EOF
+          app=Neon V3
+          package=ru.nika.v3test
+          versionName=1.2.0-v3
+          versionCode=3
+          engine=neon.presentation.parallel.v3
+          engineVersion=1.2.0
+          fallback=DISABLED
+          pipeline=TEXT_PLAN->LAYOUT_PLAN->IMAGE_GENERATE->PPTX_ASSEMBLE
+          templateSha256=$TEMPLATE_SHA256
+          finalActions=OPEN,SEND
+          sourceCommit=$GITHUB_SHA
+          EOF
+          rm artifacts/template_from_apk.pptx
+          unzip -l artifacts/Neon_V3.apk | grep -E 'classes.*dex|neon_v3_engine|presentation_template_v3'
 
-      - name: Upload Neon V3 APK
+      - name: Upload Neon V3 1.2 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Neon_V3_1_1_Android
+          name: Neon_V3_Layout_v12
           path: artifacts/
           if-no-files-found: error
           retention-days: 7
