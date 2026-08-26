@@ -1,0 +1,4 @@
+Neon V3 Android build trigger
+2026-08-26T07:03:00Z
+engine=neon.presentation.parallel.v3
+fallback=DISABLED
