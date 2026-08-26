@@ -1,0 +1,228 @@
+                          "В JSON-плане отсутствует массив slides",
+                          stage="PLAN_VALIDATE")
+    if len(slides) != content_count:
+        raise EngineError("V3_PLAN_SLIDE_COUNT",
+                          f"Модель вернула {len(slides)} слайдов вместо {content_count}",
+                          stage="PLAN_VALIDATE",
+                          detail={"expected": content_count, "actual": len(slides)})
+    return plan
+
+
+def _cards(raw: Any, body: str) -> List[Dict[str, str]]:
+    result: List[Dict[str, str]] = []
+    if isinstance(raw, list):
+        for item in raw[:4]:
+            if isinstance(item, dict):
+                result.append({"title": _limited(item.get("title"), 34),
+                               "body": _limited(item.get("body"), 100)})
+    sentences = [_limited(x, 100) for x in
+                 re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", body)) if x.strip()]
+    defaults = ["Ключевой фактор", "Практический шаг", "Контроль", "Результат"]
+    while len(result) < 4:
+        pos = len(result)
+        result.append({"title": defaults[pos],
+                       "body": sentences[pos] if pos < len(sentences)
+                       else "Проверяемый элемент решения"})
+    return result
+
+
+def _build_specs(plan: Dict[str, Any], topic: str, slide_count: int) -> List[SlideSpec]:
+    raw_slides = plan["slides"]
+    specs = [SlideSpec(role="COVER",
+                       title=_limited(plan.get("presentationTitle") or topic, 90),
+                       subtitle=_limited(plan.get("presentationSubtitle") or
+                                         "Практический обзор и ожидаемый эффект", 160))]
+    contents: List[Dict[str, str]] = []
+    seen = set()
+    for item in raw_slides:
+        if not isinstance(item, dict):
+            continue
+        section = _limited(item.get("section"), 48)
+        if section and section.lower() not in seen:
+            seen.add(section.lower())
+            contents.append({"title": f"{len(contents)+1:02d}", "body": section})
+        if len(contents) == 8:
+            break
+    specs.append(SlideSpec(role="CONTENTS", title="Содержание",
+                           section="СТРУКТУРА ПРЕЗЕНТАЦИИ", number="02",
+                           items=contents))
+    for pos, raw in enumerate(raw_slides):
+        if not isinstance(raw, dict):
+            raise EngineError("V3_PLAN_SLIDE_TYPE",
+                              f"Элемент slides[{pos}] не является объектом",
+                              stage="PLAN_VALIDATE", slide=pos + 3)
+        role = ROLE_CYCLE[pos % len(ROLE_CYCLE)]
+        section = _limited(raw.get("section") or f"Раздел {pos // 5 + 1}", 48)
+        body = _paragraphs(raw.get("body"), 650)
+        spec = SlideSpec(
+            role=role, title=_limited(raw.get("title") or section, 85),
+            subtitle=_limited(raw.get("subtitle") or raw.get("lead"), 150),
+            lead=_limited(raw.get("lead") or raw.get("subtitle"), 170),
+            body=body, section=section.upper(), number=f"{pos+3:02d}",
+            cards=_cards(raw.get("cards"), body),
+            image_prompt=_limited(raw.get("imagePrompt") or raw.get("title"), 700),
+        )
+        if role == "SECTION_DIVIDER":
+            spec.title = section
+            spec.subtitle = _limited(raw.get("subtitle") or raw.get("lead") or raw.get("title"), 150)
+        specs.append(spec)
+    if len(specs) != slide_count:
+        raise EngineError("V3_INTERNAL_SLIDE_COUNT",
+                          f"Внутренний план содержит {len(specs)} слайдов вместо {slide_count}",
+                          stage="PLAN_VALIDATE")
+    return specs
+
+
+def _generate_image(spec: SlideSpec, slide_no: int, output_dir: Path,
+                    key: str, logger: JsonlLogger) -> Path:
+    prompt = HERO_IMAGE_CONTRACT + "Business subject: " + (spec.image_prompt or spec.title)
+    logger.event("IMAGE_GENERATE", "START", f"Генерирую изображение {slide_no}",
+                 slide=slide_no, role=spec.role, model=IMAGE_MODEL)
+    ratio = "16:9" if spec.role == "IMAGE_BOTTOM" else "3:4"
+    response = _post_json(IMAGE_ENDPOINT,
+                          {"model": IMAGE_MODEL, "prompt": prompt, "n": 1,
+                           "aspect_ratio": ratio},
+                          key, 320, 48 * 1024 * 1024)
+    try:
+        item = response["data"][0]
+    except Exception as error:
+        raise EngineError("V3_IMAGE_RESPONSE_SHAPE",
+                          "RouterAI не вернул data[0] изображения",
+                          stage="IMAGE_GENERATE", slide=slide_no,
+                          role=spec.role) from error
+    encoded = str(item.get("b64_json") or "")
+    body = base64.b64decode(encoded) if encoded else _download_image(str(item.get("url") or ""))
+    if len(body) < 1024 or len(body) > 32 * 1024 * 1024:
+        raise EngineError("V3_IMAGE_BYTES_INVALID",
+                          f"Размер изображения {len(body)} байт недопустим",
+                          stage="IMAGE_GENERATE", slide=slide_no, role=spec.role)
+    folder = output_dir / "v3_images"
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"slide_{slide_no:02d}.png"
+    target.write_bytes(body)
+    try:
+        with Image.open(target) as image:
+            image.verify()
+    except Exception as error:
+        raise EngineError("V3_IMAGE_DECODE_FAILED",
+                          f"Изображение слайда {slide_no} не декодируется: {error}",
+                          stage="IMAGE_GENERATE", slide=slide_no,
+                          role=spec.role) from error
+    logger.event("IMAGE_GENERATE", "PASS", f"Изображение {slide_no} готово",
+                 slide=slide_no, role=spec.role, bytes=len(body), path=str(target))
+    return target
+
+
+def _gradient_background(path: Path, width: int = 1280, height: int = 720) -> None:
+    image = Image.new("RGB", (width, height), (1, 47, 66))
+    px = image.load()
+    for y in range(height):
+        for x in range(width):
+            left_glow = max(0.0, 1.0 - math.sqrt((x / 360.0) ** 2 + ((y - 340) / 520.0) ** 2))
+            bottom_glow = max(0.0, 1.0 - math.sqrt(((x - 1030) / 570.0) ** 2 + ((y - 760) / 300.0) ** 2))
+            cyan = min(1.0, left_glow * 0.72 + bottom_glow * 0.32)
+            r = int(1 + 18 * cyan)
+            g = int(47 + 75 * cyan)
+            b = int(66 + 90 * cyan)
+            px[x, y] = (r, g, b)
+    image.save(path, "PNG", optimize=True)
+
+
+def _add_background(slide: Any, bg: Path, prs: Presentation) -> None:
+    slide.shapes.add_picture(str(bg), 0, 0, width=prs.slide_width, height=prs.slide_height)
+
+
+def _textbox(slide: Any, x: float, y: float, w: float, h: float, text: str,
+             size: float, color: RGBColor = WHITE, bold: bool = False,
+             align: PP_ALIGN = PP_ALIGN.LEFT,
+             valign: MSO_ANCHOR = MSO_ANCHOR.TOP) -> Any:
+    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    frame = box.text_frame
+    frame.clear()
+    frame.word_wrap = True
+    frame.margin_left = Inches(0.03)
+    frame.margin_right = Inches(0.03)
+    frame.margin_top = Inches(0.03)
+    frame.margin_bottom = Inches(0.03)
+    frame.vertical_anchor = valign
+    paragraphs = [p.strip() for p in str(text or "").split("\n\n") if p.strip()]
+    if not paragraphs:
+        paragraphs = [""]
+    for pos, value in enumerate(paragraphs):
+        p = frame.paragraphs[0] if pos == 0 else frame.add_paragraph()
+        p.text = value
+        p.alignment = align
+        p.space_after = Pt(8)
+        for run in p.runs:
+            run.font.name = "Verdana"
+            run.font.size = Pt(size)
+            run.font.bold = bold
+            run.font.color.rgb = color
+    return box
+
+
+def _rounded(slide: Any, x: float, y: float, w: float, h: float,
+             fill: RGBColor, line: RGBColor = NAVY_2, transparency: int = 0) -> Any:
+    shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
+                                   Inches(x), Inches(y), Inches(w), Inches(h))
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = fill
+    shape.fill.transparency = transparency
+    shape.line.color.rgb = line
+    shape.line.width = Pt(1)
+    return shape
+
+
+def _logo(slide: Any) -> None:
+    shape = _rounded(slide, 0.36, 0.28, 0.48, 0.48, PALE, PALE)
+    _textbox(slide, 0.41, 0.31, 0.38, 0.38, "ДОМ\nРФ", 7.4, NAVY, True,
+             PP_ALIGN.CENTER, MSO_ANCHOR.MIDDLE)
+
+
+def _chrome(slide: Any, spec: SlideSpec, slide_no: int) -> None:
+    _logo(slide)
+    if slide_no > 1:
+        _textbox(slide, 0.95, 0.35, 3.7, 0.28, spec.section, 8.5, MUTED, True)
+        _textbox(slide, 12.25, 0.34, 0.55, 0.3, f"{slide_no:02d}", 9, MUTED,
+                 True, PP_ALIGN.RIGHT)
+
+
+def _add_picture_contain(slide: Any, path: Path, x: float, y: float,
+                         w: float, h: float) -> None:
+    with Image.open(path) as im:
+        iw, ih = im.size
+    scale = min(w / iw, h / ih)
+    pw, ph = iw * scale, ih * scale
+    slide.shapes.add_picture(str(path), Inches(x + (w - pw) / 2),
+                             Inches(y + (h - ph) / 2),
+                             width=Inches(pw), height=Inches(ph))
+
+
+def _render_slide(prs: Presentation, spec: SlideSpec, slide_no: int,
+                  bg: Path, logger: JsonlLogger) -> Dict[str, Any]:
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_background(slide, bg, prs)
+    _chrome(slide, spec, slide_no)
+    role = spec.role
+    logger.event("SLIDE_RENDER", "START", f"Собираю слайд {slide_no}: {role}",
+                 slide=slide_no, role=role)
+    if role == "COVER":
+        _textbox(slide, 0.8, 1.4, 7.4, 2.0, spec.title, 34, WHITE, True,
+                 valign=MSO_ANCHOR.MIDDLE)
+        _textbox(slide, 0.84, 3.5, 6.8, 1.0, spec.subtitle, 15, CYAN)
+        if spec.images:
+            _add_picture_contain(slide, Path(spec.images[0]), 8.0, 1.1, 4.6, 4.9)
+        _rounded(slide, 0.84, 6.2, 3.2, 0.42, CYAN, CYAN)
+        _textbox(slide, 1.0, 6.27, 2.9, 0.25, "NEON PRESENTATION V3", 8.5, NAVY, True)
+    elif role == "CONTENTS":
+        _textbox(slide, 0.95, 0.95, 5.2, 0.7, spec.title, 27, WHITE, True)
+        for pos, item in enumerate(spec.items[:8]):
+            col = 0 if pos < 4 else 1
+            row = pos if pos < 4 else pos - 4
+            x = 1.0 + col * 6.1
+            y = 2.0 + row * 0.95
+            _rounded(slide, x, y, 0.48, 0.48, PALE, PALE)
+            _textbox(slide, x, y + 0.05, 0.48, 0.25, item.get("title", ""), 9,
+                     NAVY, True, PP_ALIGN.CENTER, MSO_ANCHOR.MIDDLE)
+            _textbox(slide, x + 0.7, y - 0.02, 4.9, 0.65,
+                     item.get("body", ""), 14, WHITE, False,
