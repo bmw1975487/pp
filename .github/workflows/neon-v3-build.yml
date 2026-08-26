@@ -4,22 +4,79 @@ on:
   push:
     branches:
       - build/neon-v3-test
+    paths:
+      - v3-build-trigger.txt
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  smoke:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
     steps:
-      - uses: actions/checkout@v4
-      - name: Smoke
-        run: |
-          mkdir -p artifacts
-          printf 'Neon V3 builder is alive\n' > artifacts/smoke.txt
-      - uses: actions/upload-artifact@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
-          name: neon-v3-smoke
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Restore uploaded V3 template
+        run: |
+          set -euo pipefail
+          mkdir -p v3test/src/main/assets
+          cat v3template/template.b64.part* | base64 --decode > v3test/src/main/assets/presentation_template_v3.pptx
+          test -s v3test/src/main/assets/presentation_template_v3.pptx
+          unzip -tq v3test/src/main/assets/presentation_template_v3.pptx
+          sha256sum v3test/src/main/assets/presentation_template_v3.pptx
+
+      - name: Build Neon V3 debug APK
+        run: |
+          set -euo pipefail
+          gradle --no-daemon :v3test:assembleDebug --stacktrace
+
+      - name: Verify and prepare artifact
+        run: |
+          set -euo pipefail
+          APK='v3test/build/outputs/apk/debug/v3test-debug.apk'
+          test -s "$APK"
+          unzip -tq "$APK"
+          mkdir -p artifacts
+          cp "$APK" artifacts/Neon_V3_unsigned.apk
+          sha256sum artifacts/Neon_V3_unsigned.apk | tee artifacts/Neon_V3_unsigned.sha256.txt
+          printf 'source_commit=%s\n' "$GITHUB_SHA" > artifacts/BUILD_INFO.txt
+          printf 'engine=neon.presentation.parallel.v3\n' >> artifacts/BUILD_INFO.txt
+          printf 'fallback=DISABLED\n' >> artifacts/BUILD_INFO.txt
+          unzip -l artifacts/Neon_V3_unsigned.apk | grep -E 'presentation_template_v3|classes.*dex|neon_v3_engine' || true
+
+      - name: Upload Neon V3 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Neon_V3_Android
           path: artifacts/
           if-no-files-found: error
+          retention-days: 7
