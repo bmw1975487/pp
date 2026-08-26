@@ -1,0 +1,336 @@
+  "presentationSubtitle":"до 160 символов",
+  "slides":[
+    {{
+      "section":"короткое название раздела",
+      "title":"до 85 символов",
+      "subtitle":"до 150 символов",
+      "lead":"до 170 символов",
+      "body":"2-3 коротких абзаца, суммарно до 650 символов",
+      "imagePrompt":"конкретный смысл будущего 3D-объекта, без описания стиля",
+      "cards":[
+        {{"title":"до 34 символов","body":"до 100 символов"}},
+        {{"title":"до 34 символов","body":"до 100 символов"}},
+        {{"title":"до 34 символов","body":"до 100 символов"}},
+        {{"title":"до 34 символов","body":"до 100 символов"}}
+      ]
+    }}
+  ]
+}}
+Массив slides должен содержать ровно {content_count} элементов. Первый и каждый
+шестой элемент должны естественно вводить новый смысловой раздел. Факты должны
+быть полезными и прикладными. Не добавляй ссылки, служебные комментарии и Markdown.
+""".strip()
+    response = _post_json(
+        CHAT_ENDPOINT,
+        {
+            "model": CHAT_MODEL,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.25,
+        },
+        key,
+        timeout=190,
+        maximum=8 * 1024 * 1024,
+    )
+    try:
+        content = response["choices"][0]["message"]["content"]
+    except Exception as error:
+        raise EngineError(
+            "V3_PLAN_RESPONSE_SHAPE",
+            "RouterAI вернул ответ без choices[0].message.content",
+            stage="PLAN_PARSE",
+            detail={"response": response},
+        ) from error
+    plan = _extract_json(str(content))
+    slides = plan.get("slides")
+    if not isinstance(slides, list):
+        raise EngineError(
+            "V3_PLAN_SLIDES_MISSING",
+            "В JSON-плане отсутствует массив slides",
+            stage="PLAN_VALIDATE",
+        )
+    if len(slides) != content_count:
+        raise EngineError(
+            "V3_PLAN_SLIDE_COUNT",
+            f"Модель вернула {len(slides)} содержательных слайдов вместо {content_count}",
+            stage="PLAN_VALIDATE",
+            detail={"expected": content_count, "actual": len(slides)},
+        )
+    return plan
+
+
+def _cards(raw: Any, body: str) -> List[Dict[str, str]]:
+    result: List[Dict[str, str]] = []
+    if isinstance(raw, list):
+        for item in raw[:4]:
+            if isinstance(item, dict):
+                result.append({
+                    "title": _limited(item.get("title"), 34),
+                    "body": _limited(item.get("body"), 100),
+                })
+    sentences = [
+        _limited(x, 100)
+        for x in re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", body))
+        if x.strip()
+    ]
+    defaults = ["Ключевой фактор", "Практический шаг", "Контроль", "Результат"]
+    while len(result) < 4:
+        pos = len(result)
+        result.append({
+            "title": defaults[pos],
+            "body": sentences[pos] if pos < len(sentences) else "Проверяемый элемент решения",
+        })
+    return result
+
+
+def _build_specs(plan: Dict[str, Any], topic: str, slide_count: int) -> List[SlideSpec]:
+    raw_slides = plan["slides"]
+    title = _limited(plan.get("presentationTitle") or topic, 90)
+    subtitle = _limited(
+        plan.get("presentationSubtitle")
+        or "Практический обзор, ключевые решения и ожидаемый эффект",
+        160,
+    )
+    specs: List[SlideSpec] = [
+        SlideSpec(role="COVER", title=title, subtitle=subtitle),
+    ]
+
+    contents: List[Dict[str, str]] = []
+    seen = set()
+    for item in raw_slides:
+        if not isinstance(item, dict):
+            continue
+        section = _limited(item.get("section"), 48)
+        if section and section.lower() not in seen:
+            seen.add(section.lower())
+            contents.append({
+                "title": f"{len(contents) + 1:02d}",
+                "body": section,
+            })
+        if len(contents) == 8:
+            break
+    if not contents:
+        for pos, item in enumerate(raw_slides[:8], 1):
+            title_item = _limited(item.get("title") if isinstance(item, dict) else "", 56)
+            contents.append({"title": f"{pos:02d}", "body": title_item})
+
+    specs.append(SlideSpec(
+        role="CONTENTS",
+        title="Содержание",
+        section="СТРУКТУРА ПРЕЗЕНТАЦИИ",
+        number="02",
+        items=contents,
+    ))
+
+    for pos, raw in enumerate(raw_slides):
+        if not isinstance(raw, dict):
+            raise EngineError(
+                "V3_PLAN_SLIDE_TYPE",
+                f"Элемент slides[{pos}] не является объектом",
+                stage="PLAN_VALIDATE",
+                slide=pos + 3,
+            )
+        role = ROLE_CYCLE[pos % len(ROLE_CYCLE)]
+        section = _limited(raw.get("section") or f"Раздел {pos // 5 + 1}", 48)
+        body = _paragraphs(raw.get("body"), 650)
+        spec = SlideSpec(
+            role=role,
+            title=_limited(raw.get("title") or section, 85),
+            subtitle=_limited(raw.get("subtitle") or raw.get("lead"), 150),
+            lead=_limited(raw.get("lead") or raw.get("subtitle"), 170),
+            body=body,
+            section=section.upper(),
+            number=f"{pos + 3:02d}",
+            cards=_cards(raw.get("cards"), body),
+            image_prompt=_limited(raw.get("imagePrompt") or raw.get("title"), 700),
+        )
+        if role == "SECTION_DIVIDER":
+            spec.title = section
+            spec.subtitle = _limited(
+                raw.get("subtitle") or raw.get("lead") or raw.get("title"),
+                150,
+            )
+        specs.append(spec)
+    if len(specs) != slide_count:
+        raise EngineError(
+            "V3_INTERNAL_SLIDE_COUNT",
+            f"Внутренний план содержит {len(specs)} слайдов вместо {slide_count}",
+            stage="PLAN_VALIDATE",
+        )
+    return specs
+
+
+def _image_ratio(role: str) -> str:
+    if role == "IMAGE_BOTTOM":
+        return "16:9"
+    if role in ("IMAGE_LEFT", "IMAGE_RIGHT"):
+        return "3:4"
+    return "1:1"
+
+
+def _generate_image(
+    spec: SlideSpec,
+    slide_no: int,
+    output_dir: Path,
+    key: str,
+    logger: JsonlLogger,
+) -> Path:
+    prompt = (
+        HERO_IMAGE_CONTRACT
+        + "Business subject to express: "
+        + (spec.image_prompt or spec.title)
+        + ". Use a silhouette which is visibly different from generic towers, "
+          "rectangular slabs and right-side columns."
+    )
+    logger.event(
+        "IMAGE_GENERATE",
+        "START",
+        f"Генерирую изображение для слайда {slide_no}",
+        slide=slide_no,
+        role=spec.role,
+        model=IMAGE_MODEL,
+        prompt=prompt,
+    )
+    response = _post_json(
+        IMAGE_ENDPOINT,
+        {
+            "model": IMAGE_MODEL,
+            "prompt": prompt,
+            "n": 1,
+            "aspect_ratio": _image_ratio(spec.role),
+        },
+        key,
+        timeout=320,
+        maximum=48 * 1024 * 1024,
+    )
+    try:
+        item = response["data"][0]
+    except Exception as error:
+        raise EngineError(
+            "V3_IMAGE_RESPONSE_SHAPE",
+            "RouterAI не вернул data[0] изображения",
+            stage="IMAGE_GENERATE",
+            slide=slide_no,
+            role=spec.role,
+            detail={"response": response},
+        ) from error
+    encoded = str(item.get("b64_json") or "")
+    if encoded:
+        try:
+            body = base64.b64decode(encoded)
+        except Exception as error:
+            raise EngineError(
+                "V3_IMAGE_BASE64_INVALID",
+                "Изображение содержит повреждённый base64",
+                stage="IMAGE_GENERATE",
+                slide=slide_no,
+                role=spec.role,
+            ) from error
+    else:
+        body = _download_image(str(item.get("url") or ""))
+    if len(body) < 1024 or len(body) > 32 * 1024 * 1024:
+        raise EngineError(
+            "V3_IMAGE_BYTES_INVALID",
+            f"Размер изображения {len(body)} байт недопустим",
+            stage="IMAGE_GENERATE",
+            slide=slide_no,
+            role=spec.role,
+        )
+    drafts = output_dir / "v3_images"
+    drafts.mkdir(parents=True, exist_ok=True)
+    target = drafts / f"slide_{slide_no:02d}.png"
+    target.write_bytes(body)
+    try:
+        with Image.open(target) as image:
+            image.verify()
+        with Image.open(target) as image:
+            width, height = image.size
+            fmt = image.format
+    except Exception as error:
+        raise EngineError(
+            "V3_IMAGE_DECODE_FAILED",
+            f"Изображение слайда {slide_no} не декодируется: {error}",
+            stage="IMAGE_GENERATE",
+            slide=slide_no,
+            role=spec.role,
+        ) from error
+    logger.event(
+        "IMAGE_GENERATE",
+        "PASS",
+        f"Изображение слайда {slide_no} готово",
+        slide=slide_no,
+        role=spec.role,
+        bytes=len(body),
+        width=width,
+        height=height,
+        format=fmt,
+        path=str(target),
+    )
+    return target
+
+
+def _remove_all_slides(prs: Presentation) -> None:
+    sld_id_lst = prs.slides._sldIdLst
+    for sld_id in list(sld_id_lst):
+        prs.part.drop_rel(sld_id.rId)
+        sld_id_lst.remove(sld_id)
+
+
+def _placeholder_by_idx(slide: Any, idx: int) -> Any:
+    for shape in slide.placeholders:
+        if shape.placeholder_format.idx == idx:
+            return shape
+    raise KeyError(idx)
+
+
+def _set_text(slide: Any, idx: int, value: str, slide_no: int, role: str) -> None:
+    try:
+        placeholder = _placeholder_by_idx(slide, idx)
+    except KeyError as error:
+        raise EngineError(
+            "V3_PLACEHOLDER_MISSING",
+            f"Не найден текстовый placeholder idx={idx}",
+            stage="SLIDE_RENDER",
+            slide=slide_no,
+            role=role,
+            detail={"placeholder": idx},
+        ) from error
+    if not getattr(placeholder, "has_text_frame", False):
+        raise EngineError(
+            "V3_PLACEHOLDER_NOT_TEXT",
+            f"Placeholder idx={idx} не является текстовым",
+            stage="SLIDE_RENDER",
+            slide=slide_no,
+            role=role,
+            detail={"placeholder": idx},
+        )
+    text_frame = placeholder.text_frame
+    text_frame.clear()
+    paragraphs = [p.strip() for p in (value or "").split("\n\n") if p.strip()]
+    if not paragraphs:
+        return
+    text_frame.paragraphs[0].text = paragraphs[0]
+    for paragraph in paragraphs[1:]:
+        text_frame.add_paragraph().text = paragraph
+
+
+def _contain_box(src_w: int, src_h: int, left: int, top: int, width: int, height: int):
+    if src_w <= 0 or src_h <= 0:
+        return left, top, width, height
+    scale = min(width / src_w, height / src_h)
+    new_width = int(round(src_w * scale))
+    new_height = int(round(src_h * scale))
+    return (
+        left + (width - new_width) // 2,
+        top + (height - new_height) // 2,
+        new_width,
+        new_height,
+    )
+
+
+def _insert_picture(slide: Any, idx: int, image_path: Path, slide_no: int, role: str) -> None:
+    if not image_path.is_file():
+        raise EngineError(
+            "V3_IMAGE_FILE_MISSING",
