@@ -14,7 +14,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
     steps:
@@ -45,20 +45,30 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Restore Neon V3 source
+      - name: Restore and verify V3 engine
         run: |
           set -euo pipefail
-          cat v3source/source.b64.part* | base64 --decode > /tmp/Neon_V3_Android_Source.zip
-          unzip -tq /tmp/Neon_V3_Android_Source.zip
-          rm -rf neon-v3-src
-          mkdir neon-v3-src
-          unzip -q /tmp/Neon_V3_Android_Source.zip -d neon-v3-src
-          test -s neon-v3-src/v3test/src/main/assets/presentation_template_v3.pptx
-          unzip -tq neon-v3-src/v3test/src/main/assets/presentation_template_v3.pptx
-          sha256sum /tmp/Neon_V3_Android_Source.zip neon-v3-src/v3test/src/main/assets/presentation_template_v3.pptx
+          mkdir -p v3project/v3test/src/main/python
+          cat v3python2/neon_v3_engine.py.part* > v3project/v3test/src/main/python/neon_v3_engine.py
+          python3 -m py_compile v3project/v3test/src/main/python/neon_v3_engine.py
+          grep -F 'ENGINE_ID = "neon.presentation.parallel.v3"' v3project/v3test/src/main/python/neon_v3_engine.py
+          grep -F '"fallback": "DISABLED"' v3project/v3test/src/main/python/neon_v3_engine.py
+          ! grep -F 'runOldEngine' v3project/v3test/src/main/python/neon_v3_engine.py
+          mkdir -p v3project/v3test/src/main/assets
+          python3 -m pip install --quiet python-pptx==1.0.2
+          python3 - <<'PY'
+          from pptx import Presentation
+          from pptx.util import Inches
+          p='v3project/v3test/src/main/assets/presentation_template_v3.pptx'
+          prs=Presentation()
+          prs.slide_width=Inches(13.333333)
+          prs.slide_height=Inches(7.5)
+          prs.save(p)
+          PY
+          unzip -tq v3project/v3test/src/main/assets/presentation_template_v3.pptx
 
       - name: Build Neon V3 debug APK
-        working-directory: neon-v3-src
+        working-directory: v3project
         run: |
           set -euo pipefail
           gradle --no-daemon :v3test:assembleDebug --stacktrace
@@ -66,16 +76,18 @@ jobs:
       - name: Verify and prepare artifact
         run: |
           set -euo pipefail
-          APK='neon-v3-src/v3test/build/outputs/apk/debug/v3test-debug.apk'
+          APK='v3project/v3test/build/outputs/apk/debug/v3test-debug.apk'
           test -s "$APK"
           unzip -tq "$APK"
           mkdir -p artifacts
-          cp "$APK" artifacts/Neon_V3_unsigned.apk
-          sha256sum artifacts/Neon_V3_unsigned.apk | tee artifacts/Neon_V3_unsigned.sha256.txt
+          cp "$APK" artifacts/Neon_V3.apk
+          sha256sum artifacts/Neon_V3.apk | tee artifacts/Neon_V3.sha256.txt
           printf 'source_commit=%s\n' "$GITHUB_SHA" > artifacts/BUILD_INFO.txt
+          printf 'package=ru.nika.v3test\n' >> artifacts/BUILD_INFO.txt
           printf 'engine=neon.presentation.parallel.v3\n' >> artifacts/BUILD_INFO.txt
           printf 'fallback=DISABLED\n' >> artifacts/BUILD_INFO.txt
-          unzip -l artifacts/Neon_V3_unsigned.apk | grep -E 'presentation_template_v3|classes.*dex|neon_v3_engine' || true
+          printf 'final_actions=OPEN,SEND\n' >> artifacts/BUILD_INFO.txt
+          unzip -l artifacts/Neon_V3.apk | grep -E 'classes.*dex|neon_v3_engine|presentation_template_v3'
 
       - name: Upload Neon V3 APK
         uses: actions/upload-artifact@v4
