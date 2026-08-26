@@ -1,0 +1,240 @@
+        raise EngineError("V3_PLAN_JSON_MISSING", "Модель не вернула JSON",
+                          stage="TEXT_PLAN", detail={"responsePrefix": source[:1200]})
+    try:
+        value = json.loads(source[first:last + 1])
+    except Exception as error:
+        raise EngineError("V3_PLAN_JSON_INVALID", f"JSON текста повреждён: {error}",
+                          stage="TEXT_PLAN") from error
+    if not isinstance(value, dict):
+        raise EngineError("V3_PLAN_JSON_TYPE", "Корень плана должен быть объектом", stage="TEXT_PLAN")
+    return value
+
+
+def _divider_count(slide_count: int) -> int:
+    usable = max(0, int(slide_count) - 2)
+    if usable >= 13:
+        return 3
+    if usable >= 7:
+        return 2
+    if usable >= 4:
+        return 1
+    return 0
+
+
+def _create_text_plan(topic: str, slide_count: int, key: str) -> Dict[str, Any]:
+    """Phase 1: write all substantive text before layouts or images exist."""
+    dividers = _divider_count(slide_count)
+    content_count = slide_count - 2 - dividers
+    section_count = max(1, dividers)
+    prompt = f"""
+Тема презентации: {topic}
+Физических слайдов: {slide_count}. Обложка и содержание будут добавлены движком.
+Также движок сам добавит {dividers} слайда-разделителя. Сейчас напиши ТОЛЬКО
+полное содержательное наполнение {content_count} информационных слайдов.
+Не выбирай макеты, не решай, где будут изображения, и не пиши image prompts.
+
+Разбей материал ровно на {section_count} смысловых раздела. Поле section должно
+быть одинаковым у последовательных слайдов одного раздела. Материал должен быть
+насыщенным, но плотность текста намеренно варьируй: минимум два слайда сделай
+средними (body примерно 300-480 символов), минимум два — подробными (650-950
+символов), остальные 420-750 символов. Не делай всю презентацию набором коротких
+подписей. points должны кратко и без потери смысла конспектировать body.
+
+Верни только JSON:
+{{
+  "presentationTitle":"до 90 символов",
+  "presentationSubtitle":"до 160 символов",
+  "slides":[{{
+    "section":"название смыслового раздела",
+    "title":"до 85 символов",
+    "lead":"ключевая мысль до 180 символов",
+    "body":"2-3 содержательных абзаца",
+    "points":[
+      {{"title":"до 42 символов","body":"до 150 символов"}},
+      {{"title":"до 42 символов","body":"до 150 символов"}},
+      {{"title":"до 42 символов","body":"до 150 символов"}},
+      {{"title":"до 42 символов","body":"до 150 символов"}}
+    ]
+  }}]
+}}
+
+Массив slides — ровно {content_count} элементов. Без Markdown, ссылок и
+служебных комментариев. Сначала факты и объяснение, визуальный дизайн будет
+спроектирован только после того, как этот текст готов.
+""".strip()
+    response = _post_json(
+        CHAT_ENDPOINT,
+        {"model": CHAT_MODEL, "messages": [
+            {"role": "system", "content": "Ты редактор содержательных деловых презентаций. Сначала пишешь полный текст, не дизайн. Верни только JSON."},
+            {"role": "user", "content": prompt}], "temperature": 0.28},
+        key, 220, 10 * 1024 * 1024,
+    )
+    try:
+        text = response["choices"][0]["message"]["content"]
+    except Exception as error:
+        raise EngineError("V3_TEXT_RESPONSE_SHAPE", "Нет choices[0].message.content",
+                          stage="TEXT_PLAN") from error
+    plan = _extract_json(str(text))
+    slides = plan.get("slides")
+    if not isinstance(slides, list):
+        raise EngineError("V3_TEXT_SLIDES_MISSING", "В текстовом плане нет slides", stage="TEXT_PLAN")
+    if len(slides) != content_count:
+        raise EngineError("V3_TEXT_SLIDE_COUNT",
+                          f"Текстовый план содержит {len(slides)} блоков вместо {content_count}",
+                          stage="TEXT_PLAN", detail={"expected": content_count, "actual": len(slides),
+                                                     "dividerSlides": dividers})
+    plan["_dividerCount"] = dividers
+    return plan
+
+def _template_layouts(prs: Presentation) -> Dict[str, Any]:
+    by_name = {layout.name: layout for layout in prs.slide_layouts}
+    result: Dict[str, Any] = {}
+    missing: List[str] = []
+    for role, name in LAYOUT_NAMES.items():
+        layout = by_name.get(name)
+        if layout is None:
+            missing.append(f"{role}:{name}")
+        else:
+            result[role] = layout
+    if missing:
+        raise EngineError("V3_TEMPLATE_LAYOUT_MISSING",
+                          "В новом шаблоне отсутствуют макеты: " + ", ".join(missing),
+                          stage="TEMPLATE_VALIDATE")
+    return result
+
+
+def _clear_prototype_slides(prs: Presentation) -> None:
+    sld_id_lst = prs.slides._sldIdLst
+    for slide_id in list(sld_id_lst):
+        rel_id = slide_id.rId
+        prs.part.drop_rel(rel_id)
+        sld_id_lst.remove(slide_id)
+
+
+def _ph(layout_or_slide: Any, idx: int) -> Any:
+    for placeholder in layout_or_slide.placeholders:
+        if placeholder.placeholder_format.idx == idx:
+            return placeholder
+    return None
+
+
+def _ratio_string(width_emu: int, height_emu: int) -> str:
+    if height_emu <= 0:
+        return "1:1"
+    fraction = Fraction(width_emu, height_emu).limit_denominator(12)
+    return f"{fraction.numerator}:{fraction.denominator}"
+
+
+def _image_slots_for_role(layout: Any, role: str) -> List[ImageSlot]:
+    slots: List[ImageSlot] = []
+    for idx in IMAGE_PLACEHOLDERS.get(role, []):
+        ph = _ph(layout, idx)
+        if ph is None or ph.placeholder_format.type != PP_PLACEHOLDER.PICTURE:
+            raise EngineError("V3_PICTURE_PLACEHOLDER_MISSING",
+                              f"Макет {role}: нет picture placeholder idx={idx}",
+                              stage="TEMPLATE_VALIDATE", role=role,
+                              detail={"placeholderIdx": idx, "layout": layout.name})
+        slots.append(ImageSlot(
+            placeholder_idx=idx,
+            x_emu=int(ph.left), y_emu=int(ph.top),
+            width_emu=int(ph.width), height_emu=int(ph.height),
+            width_in=float(ph.width) / 914400.0,
+            height_in=float(ph.height) / 914400.0,
+            exact_ratio=float(ph.width) / float(ph.height),
+            requested_ratio=_ratio_string(int(ph.width), int(ph.height)),
+        ))
+    return slots
+
+
+def _normalize_text_plan(plan: Dict[str, Any], topic: str) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for pos, raw in enumerate(plan.get("slides") or []):
+        if not isinstance(raw, dict):
+            raise EngineError("V3_TEXT_SLIDE_TYPE", f"slides[{pos}] не объект", stage="TEXT_PLAN")
+        body = _body(raw.get("body"), 1150)
+        normalized.append({
+            "section": _clean(raw.get("section") or f"Раздел {pos + 1}", 52),
+            "title": _clean(raw.get("title") or topic, 85),
+            "lead": _clean(raw.get("lead"), 180),
+            "body": body,
+            "points": _points(raw.get("points"), body),
+        })
+    return normalized
+
+
+def _assign_content_roles(rows: List[Dict[str, Any]]) -> List[str]:
+    n = len(rows)
+    roles: List[Optional[str]] = [None] * n
+    available = set(range(n))
+
+    required = ["IMAGE_BOTTOM", "FOUR_IMAGES", "IMAGE_LEFT", "IMAGE_RIGHT",
+                "FOUR_CARDS", "TEXT_WIDE"] if n >= 6 else []
+
+    def pick(role: str) -> Optional[int]:
+        if not available:
+            return None
+        if role == "TEXT_WIDE":
+            return max(available, key=lambda i: len(rows[i]["body"]))
+        if role == "FOUR_CARDS":
+            candidates = [i for i in available if len(rows[i]["points"]) >= 4]
+            if not candidates:
+                candidates = list(available)
+            return max(candidates, key=lambda i: min(len(rows[i]["body"]), ROLE_BODY_LIMIT[role]))
+        limit = ROLE_BODY_LIMIT[role]
+        candidates = [i for i in available if len(rows[i]["body"]) <= limit]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda i: len(rows[i]["body"]))
+
+    for role in required:
+        idx = pick(role)
+        if idx is None:
+            continue
+        roles[idx] = role
+        available.remove(idx)
+
+    for idx in sorted(available):
+        row = rows[idx]
+        if len(row["points"]) >= 4 and idx % 3 == 1:
+            roles[idx] = "FOUR_CARDS"
+        else:
+            roles[idx] = "TEXT_WIDE"
+
+    if n < 6:
+        visual_sequence = ["IMAGE_RIGHT", "IMAGE_LEFT", "IMAGE_BOTTOM"]
+        visual_pos = 0
+        for idx in range(n):
+            if n >= 3 and idx in (1, n - 2) and visual_pos < len(visual_sequence):
+                role = visual_sequence[visual_pos]
+                if len(rows[idx]["body"]) <= ROLE_BODY_LIMIT[role]:
+                    roles[idx] = role
+                    visual_pos += 1
+
+    return [str(x or "TEXT_WIDE") for x in roles]
+
+
+def _normalize_sections(rows: List[Dict[str, Any]], divider_count: int) -> List[List[Dict[str, Any]]]:
+    if divider_count <= 0:
+        return [rows]
+    authored: List[List[Dict[str, Any]]] = []
+    for row in rows:
+        if not authored or authored[-1][0]["section"].casefold() != row["section"].casefold():
+            authored.append([row])
+        else:
+            authored[-1].append(row)
+    if len(authored) == divider_count and all(authored):
+        return authored
+
+    groups: List[List[Dict[str, Any]]] = []
+    base = len(rows) // divider_count
+    extra = len(rows) % divider_count
+    cursor = 0
+    for g in range(divider_count):
+        size = base + (1 if g < extra else 0)
+        group = rows[cursor:cursor + size]
+        cursor += size
+        if group:
+            groups.append(group)
+    return groups
+
+
