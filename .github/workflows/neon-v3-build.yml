@@ -6,6 +6,9 @@ on:
       - build/neon-v3-test
     paths:
       - v3-build-trigger.txt
+      - v3engine/**
+      - v3project/**
+      - .github/workflows/neon-v3-build.yml
   workflow_dispatch:
 
 permissions:
@@ -45,17 +48,18 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Restore and verify V3 engine
+      - name: Restore V3 engine and template contract
         run: |
           set -euo pipefail
-          mkdir -p v3project/v3test/src/main/python
-          cat v3python2/neon_v3_engine.py.part* > v3project/v3test/src/main/python/neon_v3_engine.py
-          python3 -m py_compile v3project/v3test/src/main/python/neon_v3_engine.py
-          grep -F 'ENGINE_ID = "neon.presentation.parallel.v3"' v3project/v3test/src/main/python/neon_v3_engine.py
-          grep -F '"fallback": "DISABLED"' v3project/v3test/src/main/python/neon_v3_engine.py
-          ! grep -F 'runOldEngine' v3project/v3test/src/main/python/neon_v3_engine.py
-          mkdir -p v3project/v3test/src/main/assets
           python3 -m pip install --quiet python-pptx==1.0.2
+          mkdir -p v3project/v3test/src/main/python v3project/v3test/src/main/assets
+          base64 --decode v3engine/neon_v3_engine.py.gz.b64 | gzip -dc > v3project/v3test/src/main/python/neon_v3_engine.py
+          python3 -m py_compile v3project/v3test/src/main/python/neon_v3_engine.py
+          grep -F 'ENGINE_VERSION = "1.1.0"' v3project/v3test/src/main/python/neon_v3_engine.py
+          grep -F 'planningMode="TEXT_FIRST"' v3project/v3test/src/main/python/neon_v3_engine.py
+          grep -F '"FOUR_IMAGES"' v3project/v3test/src/main/python/neon_v3_engine.py
+          grep -F 'IMAGE_SLOTS' v3project/v3test/src/main/python/neon_v3_engine.py
+          ! grep -F 'runOldEngine' v3project/v3test/src/main/python/neon_v3_engine.py
           python3 - <<'PY'
           from pptx import Presentation
           from pptx.util import Inches
@@ -63,6 +67,10 @@ jobs:
           prs=Presentation()
           prs.slide_width=Inches(13.333333)
           prs.slide_height=Inches(7.5)
+          # Nine physical V3 roles: cover, contents, section, cards, text,
+          # image-right, image-bottom, image-left, four-images.
+          while len(prs.slides) < 9:
+              prs.slides.add_slide(prs.slide_layouts[6])
           prs.save(p)
           PY
           unzip -tq v3project/v3test/src/main/assets/presentation_template_v3.pptx
@@ -80,19 +88,21 @@ jobs:
           test -s "$APK"
           unzip -tq "$APK"
           mkdir -p artifacts
-          cp "$APK" artifacts/Neon_V3.apk
-          sha256sum artifacts/Neon_V3.apk | tee artifacts/Neon_V3.sha256.txt
+          cp "$APK" artifacts/Neon_V3_1.1.apk
+          sha256sum artifacts/Neon_V3_1.1.apk | tee artifacts/Neon_V3_1.1.sha256.txt
           printf 'source_commit=%s\n' "$GITHUB_SHA" > artifacts/BUILD_INFO.txt
           printf 'package=ru.nika.v3test\n' >> artifacts/BUILD_INFO.txt
           printf 'engine=neon.presentation.parallel.v3\n' >> artifacts/BUILD_INFO.txt
+          printf 'engine_version=1.1.0\n' >> artifacts/BUILD_INFO.txt
+          printf 'logic=TEXT_FIRST_LAYOUTS_SECOND_IMAGES_THIRD\n' >> artifacts/BUILD_INFO.txt
           printf 'fallback=DISABLED\n' >> artifacts/BUILD_INFO.txt
           printf 'final_actions=OPEN,SEND\n' >> artifacts/BUILD_INFO.txt
-          unzip -l artifacts/Neon_V3.apk | grep -E 'classes.*dex|neon_v3_engine|presentation_template_v3'
+          unzip -l artifacts/Neon_V3_1.1.apk | grep -E 'classes.*dex|neon_v3_engine|presentation_template_v3'
 
       - name: Upload Neon V3 APK
         uses: actions/upload-artifact@v4
         with:
-          name: Neon_V3_Android
+          name: Neon_V3_1_1_Android
           path: artifacts/
           if-no-files-found: error
           retention-days: 7
