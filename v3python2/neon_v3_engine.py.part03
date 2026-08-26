@@ -1,0 +1,9 @@
+        logger.event("ENGINE", "FAILED", "V3 остановлен без запуска старого движка",
+                     code="V3_UNEXPECTED")
+        _failure_file(log, row)
+        _progress(callback, 0, "UNEXPECTED", str(error))
+        return json.dumps({"ok": False, "message": str(error),
+                           "code": "V3_UNEXPECTED", "stage": "UNEXPECTED",
+                           "log": str(log), "engine": ENGINE_ID}, ensure_ascii=False)
+    finally:
+        logger.close()
