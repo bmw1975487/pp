@@ -1,0 +1,256 @@
+def _build_specs(plan: Dict[str, Any], topic: str, slide_count: int,
+                 layouts: Dict[str, Any], logger: JsonlLogger) -> List[SlideSpec]:
+    rows = _normalize_text_plan(plan, topic)
+    divider_count = int(plan.get("_dividerCount", _divider_count(slide_count)))
+    groups = _normalize_sections(rows, divider_count) if divider_count else [rows]
+
+    title = _clean(plan.get("presentationTitle") or topic, 90)
+    subtitle = _clean(plan.get("presentationSubtitle") or "Практический обзор", 160)
+    specs: List[SlideSpec] = [SlideSpec(role="COVER", title=title, subtitle=subtitle)]
+
+    contents: List[Dict[str, str]] = []
+    for group in groups:
+        if not group:
+            continue
+        section = group[0]["section"]
+        contents.append({"number": f"{len(contents)+1:02d}", "title": section})
+    specs.append(SlideSpec(role="CONTENTS", title="Содержание", section="СТРУКТУРА ПРЕЗЕНТАЦИИ",
+                           number="02", contents=contents))
+
+    content_roles = _assign_content_roles(rows)
+    role_by_id = {id(row): role for row, role in zip(rows, content_roles)}
+
+    physical_no = 3
+    for group_no, group in enumerate(groups, 1):
+        if divider_count and group:
+            section = group[0]["section"] or f"Раздел {group_no}"
+            divider_subtitle = _clean(group[0]["lead"] or group[0]["title"], 150)
+            specs.append(SlideSpec(role="SECTION_DIVIDER", title=section,
+                                   subtitle=divider_subtitle, section=section.upper(),
+                                   number=f"{physical_no:02d}"))
+            physical_no += 1
+        for row in group:
+            role = role_by_id[id(row)]
+            body = row["body"]
+            if role not in ("TEXT_WIDE", "FOUR_CARDS") and len(body) > ROLE_BODY_LIMIT[role]:
+                logger.event("LAYOUT_PLAN", "ADJUST",
+                             "Текст не помещается в визуальный макет: выбран TEXT_WIDE",
+                             slide=physical_no, requestedRole=role, bodyChars=len(body),
+                             limit=ROLE_BODY_LIMIT[role])
+                role = "TEXT_WIDE"
+            spec = SlideSpec(role=role, title=row["title"], lead=row["lead"], body=body,
+                             section=row["section"].upper(), number=f"{physical_no:02d}",
+                             points=row["points"])
+            spec.image_slots = _image_slots_for_role(layouts[role], role)
+            specs.append(spec)
+            physical_no += 1
+
+    if len(specs) != slide_count:
+        raise EngineError("V3_LAYOUT_PHYSICAL_COUNT",
+                          f"После раскладки получено {len(specs)} слайдов вместо {slide_count}",
+                          stage="LAYOUT_PLAN",
+                          detail={"rows": len(rows), "dividers": divider_count,
+                                  "groups": [len(x) for x in groups]})
+
+    logger.event("LAYOUT_PLAN", "PASS", "Текст разложен по физическим слайдам до генерации изображений",
+                 roles=[x.role for x in specs],
+                 textSlides=sum(1 for x in specs if x.role in ("TEXT_WIDE", "FOUR_CARDS")),
+                 dividerSlides=sum(1 for x in specs if x.role == "SECTION_DIVIDER"),
+                 imageSlides=sum(1 for x in specs if x.image_slots),
+                 imageSlots=sum(len(x.image_slots) for x in specs))
+    return specs
+
+SUPPORTED_IMAGE_RATIOS = {
+    "1:1": 1.0, "4:3": 4/3, "3:4": 3/4, "16:9": 16/9,
+    "9:16": 9/16, "3:2": 3/2, "2:3": 2/3,
+}
+
+
+def _provider_ratio(exact: float) -> str:
+    return min(SUPPORTED_IMAGE_RATIOS,
+               key=lambda k: abs(math.log(max(0.01, SUPPORTED_IMAGE_RATIOS[k])) -
+                                 math.log(max(0.01, exact))))
+
+
+def _target_pixels(slot: ImageSlot, long_side: int = 1800) -> Tuple[int, int]:
+    if slot.exact_ratio >= 1:
+        return long_side, max(256, int(round(long_side / slot.exact_ratio)))
+    return max(256, int(round(long_side * slot.exact_ratio))), long_side
+
+
+def _image_brief(spec: SlideSpec, slot: ImageSlot, slot_no: int, slot_count: int) -> str:
+    base = spec.title + ". " + (spec.lead or spec.body[:260])
+    if spec.role == "FOUR_IMAGES" and spec.points:
+        point = spec.points[min(slot_no - 1, len(spec.points) - 1)]
+        base = point.get("title", "") + ". " + point.get("body", "")
+    target_w, target_h = _target_pixels(slot)
+    return (
+        HERO_IMAGE_CONTRACT
+        + f"Slide meaning: {base}. "
+        + f"This is image slot {slot_no} of {slot_count}. "
+        + f"The FINAL PowerPoint image window is exactly {slot.width_in:.3f} x {slot.height_in:.3f} inches, "
+        + f"exact aspect ratio {slot.exact_ratio:.4f}:1. Compose specifically for this extremely exact window. "
+        + f"The engine will normalize the returned PNG to exactly {target_w}x{target_h} pixels before insertion. "
+        + "Keep the full semantic subject centered inside safe margins; do not place important parts near the edges. "
+        + "Return transparent PNG whenever the model supports transparency."
+    )
+
+
+def _normalize_image_to_slot(path: Path, slot: ImageSlot) -> Tuple[int, int]:
+    target_w, target_h = _target_pixels(slot)
+    try:
+        with Image.open(path) as source:
+            image = source.convert("RGBA")
+            fitted = ImageOps.fit(image, (target_w, target_h), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+            fitted.save(path, "PNG", optimize=True)
+    except Exception as error:
+        raise EngineError("V3_IMAGE_NORMALIZE_FAILED",
+                          f"Не удалось привести изображение к точному окну: {error}",
+                          stage="IMAGE_GENERATE") from error
+    return target_w, target_h
+
+
+def _generate_image(spec: SlideSpec, slot: ImageSlot, slide_no: int, slot_no: int,
+                    output_dir: Path, key: str, logger: JsonlLogger) -> Path:
+    slot.prompt = _image_brief(spec, slot, slot_no, len(spec.image_slots))
+    provider_ratio = _provider_ratio(slot.exact_ratio)
+    logger.event("IMAGE_GENERATE", "START", "Генерирую изображение после выбора точного placeholder",
+                 slide=slide_no, role=spec.role, slot=slot_no,
+                 placeholderIdx=slot.placeholder_idx, exactRatio=slot.exact_ratio,
+                 providerRatio=provider_ratio, widthIn=slot.width_in, heightIn=slot.height_in,
+                 prompt=slot.prompt)
+    response = _post_json(
+        IMAGE_ENDPOINT,
+        {"model": IMAGE_MODEL, "prompt": slot.prompt, "n": 1,
+         "aspect_ratio": provider_ratio},
+        key, 340, 48 * 1024 * 1024,
+    )
+    try:
+        item = response["data"][0]
+    except Exception as error:
+        raise EngineError("V3_IMAGE_RESPONSE_SHAPE", "RouterAI не вернул data[0] изображения",
+                          stage="IMAGE_GENERATE", slide=slide_no, role=spec.role,
+                          detail={"slot": slot_no, "placeholderIdx": slot.placeholder_idx}) from error
+    encoded = str(item.get("b64_json") or "")
+    try:
+        payload = base64.b64decode(encoded) if encoded else _download_image(str(item.get("url") or ""))
+    except Exception as error:
+        if isinstance(error, EngineError):
+            raise
+        raise EngineError("V3_IMAGE_DECODE_BASE64", f"Не удалось получить изображение: {error}",
+                          stage="IMAGE_GENERATE", slide=slide_no, role=spec.role) from error
+    folder = output_dir / "v3_images"
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"slide_{slide_no:02d}_slot_{slot_no:02d}.png"
+    target.write_bytes(payload)
+    try:
+        with Image.open(target) as image:
+            source_w, source_h = image.size
+            image.verify()
+    except Exception as error:
+        raise EngineError("V3_IMAGE_DECODE_FAILED", f"Изображение не декодируется: {error}",
+                          stage="IMAGE_GENERATE", slide=slide_no, role=spec.role) from error
+    if source_w < 256 or source_h < 256:
+        raise EngineError("V3_IMAGE_TOO_SMALL", f"Получено только {source_w}x{source_h}",
+                          stage="IMAGE_GENERATE", slide=slide_no, role=spec.role)
+    final_w, final_h = _normalize_image_to_slot(target, slot)
+    slot.path = str(target)
+    logger.event("IMAGE_GENERATE", "PASS", "Изображение нормализовано точно под окно шаблона",
+                 slide=slide_no, role=spec.role, slot=slot_no, path=str(target),
+                 sourcePixelWidth=source_w, sourcePixelHeight=source_h,
+                 finalPixelWidth=final_w, finalPixelHeight=final_h,
+                 finalRatio=round(final_w / final_h, 4), exactRatio=round(slot.exact_ratio, 4))
+    return target
+
+def _set_text(slide: Any, idx: int, value: str) -> None:
+    ph = _ph(slide, idx)
+    if ph is None:
+        return
+    frame = ph.text_frame
+    frame.clear()
+    paragraphs = [x.strip() for x in str(value or "").split("\n\n") if x.strip()]
+    if not paragraphs:
+        paragraphs = [""]
+    for pos, value_part in enumerate(paragraphs):
+        p = frame.paragraphs[0] if pos == 0 else frame.add_paragraph()
+        p.text = value_part
+        p.space_after = 0
+
+
+def _set_header(slide: Any, spec: SlideSpec) -> None:
+    _set_text(slide, 31, spec.section)
+    _set_text(slide, 32, spec.number)
+
+
+def _fill_contents(slide: Any, spec: SlideSpec) -> None:
+    _set_text(slide, 10, spec.title)
+    _set_text(slide, 31, spec.section)
+    _set_text(slide, 32, spec.number)
+    pairs = [(16, 15), (33, 34), (35, 36), (37, 38),
+             (39, 40), (41, 42), (43, 44), (45, 46)]
+    for pos, (title_idx, body_idx) in enumerate(pairs):
+        item = spec.contents[pos] if pos < len(spec.contents) else {"number": "", "title": ""}
+        _set_text(slide, title_idx, item.get("title", ""))
+        _set_text(slide, body_idx, item.get("number", ""))
+
+
+def _insert_images(slide: Any, spec: SlideSpec, slide_no: int) -> None:
+    for slot in spec.image_slots:
+        if not slot.path:
+            raise EngineError("V3_IMAGE_NOT_READY", "Изображение не готово до сборки PPTX",
+                              stage="PPTX_ASSEMBLE", slide=slide_no, role=spec.role,
+                              detail={"placeholderIdx": slot.placeholder_idx})
+        ph = _ph(slide, slot.placeholder_idx)
+        if ph is None or ph.placeholder_format.type != PP_PLACEHOLDER.PICTURE:
+            raise EngineError("V3_PICTURE_PLACEHOLDER_MISSING",
+                              f"На реальном слайде нет picture placeholder idx={slot.placeholder_idx}",
+                              stage="PPTX_ASSEMBLE", slide=slide_no, role=spec.role)
+        ph.insert_picture(slot.path)
+
+
+def _render_spec(prs: Presentation, layouts: Dict[str, Any], spec: SlideSpec,
+                 slide_no: int, logger: JsonlLogger) -> Dict[str, Any]:
+    layout = layouts[spec.role]
+    slide = prs.slides.add_slide(layout)
+    role = spec.role
+    if role == "COVER":
+        _set_text(slide, 10, spec.title)
+        _set_text(slide, 14, spec.subtitle)
+    elif role == "CONTENTS":
+        _fill_contents(slide, spec)
+    elif role == "SECTION_DIVIDER":
+        _set_text(slide, 10, spec.title)
+        _set_text(slide, 14, spec.subtitle)
+        _set_text(slide, 32, spec.number)
+    elif role == "FOUR_CARDS":
+        _set_text(slide, 10, spec.title)
+        _set_header(slide, spec)
+        pairs = [(45, 46), (39, 42), (47, 48), (43, 44)]
+        for pos, (title_idx, body_idx) in enumerate(pairs):
+            point = spec.points[pos] if pos < len(spec.points) else {"title": "", "body": ""}
+            _set_text(slide, title_idx, point.get("title", ""))
+            _set_text(slide, body_idx, point.get("body", ""))
+    elif role == "TEXT_WIDE":
+        _set_text(slide, 10, spec.title)
+        _set_text(slide, 12, spec.lead)
+        _set_text(slide, 14, spec.body)
+        _set_header(slide, spec)
+    elif role == "IMAGE_RIGHT":
+        _set_text(slide, 10, spec.title)
+        _set_text(slide, 12, spec.lead)
+        _set_text(slide, 14, spec.body)
+        _set_text(slide, 31, spec.section)
+        _insert_images(slide, spec, slide_no)
+    elif role == "IMAGE_BOTTOM":
+        _set_text(slide, 10, spec.title)
+        _set_text(slide, 12, spec.lead)
+        _set_text(slide, 14, spec.body)
+        _set_header(slide, spec)
+        _insert_images(slide, spec, slide_no)
+    elif role == "IMAGE_LEFT":
+        _set_text(slide, 10, spec.title)
+        _set_text(slide, 12, spec.lead)
+        _set_text(slide, 19, spec.points[0]["title"] if spec.points else spec.lead)
+        _set_text(slide, 15, spec.body)
+        _set_header(slide, spec)
+        _insert_images(slide, spec, slide_no)
