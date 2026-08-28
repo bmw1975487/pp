@@ -1,0 +1,41 @@
+name: Export Android Build Tools 35
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-buildtools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install and export Build Tools 35.0.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$SDKROOT"
+          SDKMANAGER="$SDKROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(find "$SDKROOT/cmdline-tools" -type f -name sdkmanager -perm -111 | sort | tail -n 1)"
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "build-tools;35.0.0"
+          test -d "$SDKROOT/build-tools/35.0.0"
+          mkdir -p "$GITHUB_WORKSPACE/android-build-tools-35"
+          cp -a "$SDKROOT/build-tools/35.0.0/." "$GITHUB_WORKSPACE/android-build-tools-35/"
+          du -sh "$GITHUB_WORKSPACE/android-build-tools-35"
+      - name: Upload Build Tools 35.0.0
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-tools-35.0.0
+          path: android-build-tools-35/
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 7
