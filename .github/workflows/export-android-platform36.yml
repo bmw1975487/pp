@@ -1,0 +1,53 @@
+name: Export Android 36 Platform
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-platform:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure Android 36 platform
+        id: sdk
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$SDKROOT"
+          SDKMANAGER="$SDKROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(find "$SDKROOT/cmdline-tools" -type f -name sdkmanager -perm -111 | sort | tail -n 1)"
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36"
+          test -d "$SDKROOT/platforms/android-36"
+          echo "sdkroot=$SDKROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare platform artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKROOT='${{ steps.sdk.outputs.sdkroot }}'
+          OUT="$GITHUB_WORKSPACE/android-platform-36"
+          mkdir -p "$OUT"
+          cp -a "$SDKROOT/platforms/android-36/." "$OUT/"
+          du -sh "$OUT"
+          find "$OUT" -maxdepth 2 -type f | sort
+
+      - name: Upload platform
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-platform-36-complete
+          path: android-platform-36/
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 7
