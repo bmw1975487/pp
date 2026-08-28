@@ -1,0 +1,135 @@
+name: Export Android Offline Build Environment
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GRADLE_USER_HOME: ${{ github.workspace }}/seed-gradle-home
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+          cache-disabled: true
+
+      - name: Ensure Android 36 platform and build tools
+        id: sdk
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$SDKROOT"
+          SDKMANAGER="$SDKROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(find "$SDKROOT/cmdline-tools" -type f -name sdkmanager -perm -111 | sort | tail -n 1)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          test -f "$SDKROOT/platforms/android-36/android.jar"
+          test -x "$SDKROOT/build-tools/36.0.0/aapt2"
+          test -x "$SDKROOT/build-tools/36.0.0/zipalign"
+          test -x "$SDKROOT/build-tools/36.0.0/d8"
+          echo "sdkroot=$SDKROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Seed AGP 8.13.2 offline cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          SEED="$GITHUB_WORKSPACE/agp-seed"
+          mkdir -p "$SEED/app/src/main"
+          cat > "$SEED/settings.gradle.kts" <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "AgpSeed"
+          include(":app")
+          EOF
+          cat > "$SEED/build.gradle.kts" <<'EOF'
+          plugins {
+              id("com.android.application") version "8.13.2" apply false
+              id("com.android.library") version "8.13.2" apply false
+          }
+          EOF
+          cat > "$SEED/app/build.gradle.kts" <<'EOF'
+          plugins { id("com.android.application") }
+          android {
+              namespace = "com.example.seed"
+              compileSdk = 36
+              defaultConfig {
+                  applicationId = "com.example.seed"
+                  minSdk = 26
+                  targetSdk = 36
+                  versionCode = 1
+                  versionName = "1"
+              }
+          }
+          EOF
+          cat > "$SEED/app/src/main/AndroidManifest.xml" <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:label="Seed" /></manifest>
+          EOF
+          cd "$SEED"
+          gradle --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Prepare offline environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKROOT='${{ steps.sdk.outputs.sdkroot }}'
+          OUT="$GITHUB_WORKSPACE/android-offline-env"
+          mkdir -p "$OUT/android-sdk/platforms/android-36" "$OUT/android-sdk/build-tools" "$OUT/android-sdk/platform-tools"
+          cp "$SDKROOT/platforms/android-36/android.jar" "$OUT/android-sdk/platforms/android-36/android.jar"
+          cp -a "$SDKROOT/build-tools/36.0.0" "$OUT/android-sdk/build-tools/36.0.0"
+          cp -a "$SDKROOT/platform-tools/adb" "$OUT/android-sdk/platform-tools/adb" || true
+
+          GRADLE_BIN="$(readlink -f "$(command -v gradle)")"
+          GRADLE_ROOT="$(dirname "$(dirname "$GRADLE_BIN")")"
+          cp -a "$GRADLE_ROOT" "$OUT/gradle-8.13"
+          cp -a "$GRADLE_USER_HOME" "$OUT/gradle-user-home"
+
+          printf 'gradle_bin=%s\ngradle_root=%s\nsdkroot=%s\n' "$GRADLE_BIN" "$GRADLE_ROOT" "$SDKROOT" > "$OUT/ENV_INFO.txt"
+          java -version 2> "$OUT/JAVA_VERSION.txt"
+          gradle --version > "$OUT/GRADLE_VERSION.txt"
+          du -sh "$OUT" | tee "$OUT/SIZE.txt"
+          (
+            cd "$OUT"
+            find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          )
+
+      - name: Upload offline environment
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-offline-env-36-gradle-8.13-agp-8.13.2
+          path: android-offline-env/
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 7
