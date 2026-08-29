@@ -5,28 +5,21 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#070b1f">
 <title>AR персонаж</title>
-<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 <style>
-html,body{margin:0;width:100%;height:100%;background:#070b1f;color:white;font-family:Arial,sans-serif;overflow:hidden}
-model-viewer{width:100%;height:100%;background:radial-gradient(circle at 50% 35%,#26346e 0%,#0c1335 42%,#050713 100%)}
-.hint{position:fixed;left:12px;right:12px;top:12px;z-index:5;text-align:center;font-size:16px;line-height:1.3;background:rgba(0,0,0,.55);padding:10px 12px;border-radius:14px;backdrop-filter:blur(8px)}
-#ar-button{background:#fff;color:#10152f;border:0;border-radius:999px;padding:14px 22px;font-size:18px;font-weight:700;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+html,body{margin:0;width:100%;height:100%;background:radial-gradient(circle at 50% 35%,#26346e,#070b1f 55%,#02030a);color:#fff;font-family:Arial,sans-serif}
+.wrap{height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;padding:24px;box-sizing:border-box}
+h1{font-size:26px;margin:0 0 10px} p{opacity:.85;max-width:520px;line-height:1.4;margin:0 0 24px}
+.btn{display:inline-block;background:#fff;color:#10152f;text-decoration:none;border-radius:999px;padding:16px 24px;font-size:19px;font-weight:700;box-shadow:0 8px 28px rgba(0,0,0,.35)}
+.small{margin-top:20px;font-size:13px;opacity:.7}
+.small a{color:#fff}
 </style>
 </head>
 <body>
-<div class="hint">Android: нажмите «Поставить в комнату», затем наведите камеру на пол.</div>
-<model-viewer
-  src="https://cdn.jsdelivr.net/gh/bmw1975487/pp@main/ar_demo_20260829/character_ar_2_5d.glb"
-  alt="AR персонаж"
-  camera-controls
-  touch-action="pan-y"
-  shadow-intensity="1"
-  exposure="1"
-  ar
-  ar-modes="scene-viewer webxr"
-  ar-placement="floor"
-  ar-scale="auto">
-  <button slot="ar-button" id="ar-button">Поставить в комнату</button>
-</model-viewer>
+<div class="wrap">
+<h1>AR персонаж</h1>
+<p>Android: нажмите кнопку, разрешите камеру и наведите телефон на пол.</p>
+<a class="btn" href="intent://arvr.google.com/scene-viewer/1.0?file=https%3A%2F%2Fcdn.jsdelivr.net%2Fgh%2Fbmw1975487%2Fpp%40main%2Far_demo_20260829%2Fcharacter_ar_2_5d.glb&mode=ar_preferred&title=AR%20%D0%BF%D0%B5%D1%80%D1%81%D0%BE%D0%BD%D0%B0%D0%B6#Intent;scheme=https;package=com.google.android.googlequicksearchbox;action=android.intent.action.VIEW;S.browser_fallback_url=https://arvr.google.com/scene-viewer/1.0?file=https%3A%2F%2Fcdn.jsdelivr.net%2Fgh%2Fbmw1975487%2Fpp%40main%2Far_demo_20260829%2Fcharacter_ar_2_5d.glb&mode=ar_preferred&title=AR%20%D0%BF%D0%B5%D1%80%D1%81%D0%BE%D0%BD%D0%B0%D0%B6;end;">Поставить в комнату</a>
+<div class="small">Если AR не открылся: <a href="https://arvr.google.com/scene-viewer/1.0?file=https%3A%2F%2Fcdn.jsdelivr.net%2Fgh%2Fbmw1975487%2Fpp%40main%2Far_demo_20260829%2Fcharacter_ar_2_5d.glb&mode=ar_preferred&title=AR%20%D0%BF%D0%B5%D1%80%D1%81%D0%BE%D0%BD%D0%B0%D0%B6">открыть Scene Viewer</a></div>
+</div>
 </body>
 </html>
