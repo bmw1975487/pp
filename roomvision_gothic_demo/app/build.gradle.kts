@@ -11,8 +11,15 @@ android {
         applicationId = "com.roomvision.filters"
         minSdk = 29
         targetSdk = 36
-        versionCode = 50
-        versionName = "5.0.0"
+        versionCode = 51
+        versionName = "5.1.0"
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
+    }
+
+    androidResources {
+        noCompress += "tflite"
     }
 
     buildTypes {
@@ -45,16 +52,10 @@ dependencies {
     implementation("androidx.camera:camera-camera2:1.4.2")
     implementation("androidx.camera:camera-lifecycle:1.4.2")
 
-    // 2026 rendering / on-device vision stack.
-    // Filament supplies the real-time renderer; we explicitly request its Vulkan backend.
+    // Modern 2026 world-rendering stack.
     implementation("com.google.android.filament:filament-android:1.75.1")
-
-    // Current Google AI Edge runtime. Kept available for later world-specific neural models.
     implementation("com.google.ai.edge.litert:litert:2.2.0")
-
-    // Scene / vision tasks for future semantic masks and geometry-aware worlds.
     implementation("com.google.mediapipe:tasks-vision:1.0.0")
 
-    // AGSL RuntimeShader is part of the Android framework on Android 13+;
-    // no extra dependency is required. Gothic uses it directly when available.
+    // AGSL RuntimeShader is provided by Android 13+ and used directly by Gothic.
 }
