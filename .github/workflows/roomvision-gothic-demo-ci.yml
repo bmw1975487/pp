@@ -1,0 +1,98 @@
+name: RoomVision Gothic Full APK
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-roomvision:
+    if: startsWith(github.head_ref, 'chatgpt/roomvision-gothic-') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Python material generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          python3 roomvision_gothic_demo/generate_assets.py
+          echo "--- generated world pack ---"
+          du -ah roomvision_gothic_demo/app/src/main/assets/worlds/gothic_castle | sort -h
+          test -s roomvision_gothic_demo/app/src/main/assets/worlds/gothic_castle/stone_albedo.jpg
+          test -s roomvision_gothic_demo/app/src/main/assets/worlds/gothic_castle/cracks.png
+          test -s roomvision_gothic_demo/app/src/main/assets/worlds/gothic_castle/gothic_hero.jpg
+          test -s roomvision_gothic_demo/app/src/main/res/drawable/icon.png
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$SDKROOT"
+          SDKMANAGER="$SDKROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(find "$SDKROOT/cmdline-tools" -type f -name sdkmanager -perm -111 | sort | tail -n 1)"
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;35.0.0" "platform-tools"
+
+      - name: Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Build and lint
+        working-directory: roomvision_gothic_demo
+        run: |
+          set -euo pipefail
+          gradle --no-daemon clean :app:assembleDebug :app:lintDebug --stacktrace
+
+      - name: Verify full APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="roomvision_gothic_demo/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          SIZE=$(stat -c%s "$APK")
+          echo "APK_BYTES=$SIZE"
+          if [[ "$SIZE" -lt 2000000 ]]; then
+            echo "ERROR: APK is too small; material World Pack was not packaged."
+            exit 31
+          fi
+          SDKROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          "$SDKROOT/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$SDKROOT/build-tools/35.0.0/aapt" dump badging "$APK" | head -n 20
+          mkdir -p roomvision_dist
+          cp "$APK" roomvision_dist/RoomVision_Gothic_1.0.0.apk
+          sha256sum roomvision_dist/RoomVision_Gothic_1.0.0.apk > roomvision_dist/RoomVision_Gothic_1.0.0.apk.sha256
+
+      - name: Package complete source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf roomvision_gothic_demo/.gradle roomvision_gothic_demo/app/build roomvision_gothic_demo/build
+          cd roomvision_gothic_demo
+          zip -qr ../roomvision_dist/RoomVision_Gothic_1.0.0_Source.zip . -x '*.DS_Store'
+          cd ..
+          test -s roomvision_dist/RoomVision_Gothic_1.0.0_Source.zip
+
+      - name: Upload full build
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoomVision_Gothic_1.0.0_FULL
+          path: roomvision_dist/*
+          if-no-files-found: error
+          retention-days: 7
