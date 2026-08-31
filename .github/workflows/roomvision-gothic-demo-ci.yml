@@ -24,10 +24,10 @@ jobs:
           rm -rf roomvision_gothic_demo
           mkdir -p roomvision_gothic_demo
           cat rv531/payload_part_00.b64 rv531/payload_part_01.b64 rv531/payload_part_02.b64 rv531/payload_tail_0.b64 rv531/payload_tail_1.b64 rv531/payload_tail_2.b64 | base64 -d | tar -xz -C roomvision_gothic_demo
-          test -f roomvision_gothic_demo/app/src/main/java/com/roomvision/modern/NeuralCameraController.java
+          test -f roomvision_gothic_demo/app/src/main/java/com/roomvision/demo/NeuralCameraController.java
           grep -F 'versionName = "5.3.1"' roomvision_gothic_demo/app/build.gradle.kts
-          grep -F 'questVision = null;' roomvision_gothic_demo/app/src/main/java/com/roomvision/modern/NeuralCameraController.java
-          ! grep -F 'Thread.sleep(2200L)' roomvision_gothic_demo/app/src/main/java/com/roomvision/modern/NeuralCameraController.java
+          grep -F 'questVision = null;' roomvision_gothic_demo/app/src/main/java/com/roomvision/demo/NeuralCameraController.java
+          ! grep -F 'Thread.sleep(2200L)' roomvision_gothic_demo/app/src/main/java/com/roomvision/demo/NeuralCameraController.java
 
       - name: JDK 17
         uses: actions/setup-java@v4
