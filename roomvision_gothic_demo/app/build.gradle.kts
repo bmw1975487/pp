@@ -11,8 +11,8 @@ android {
         applicationId = "com.roomvision.filters"
         minSdk = 29
         targetSdk = 36
-        versionCode = 40
-        versionName = "4.0.0"
+        versionCode = 41
+        versionName = "4.1.0"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
