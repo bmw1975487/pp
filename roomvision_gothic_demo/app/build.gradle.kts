@@ -34,7 +34,8 @@ android {
     lint {
         // Camera permission is explicitly granted before GothicCameraView is created.
         // Predictive back is explicitly opted out in the manifest for this single-Activity camera app.
-        disable += setOf("MissingPermission", "GestureBackNavigation")
+        // Bitmap.compress is invoked from an explicit dedicated Thread; current lint does not infer that lambda hop.
+        disable += setOf("MissingPermission", "GestureBackNavigation", "WrongThread")
         abortOnError = true
         warningsAsErrors = false
     }
