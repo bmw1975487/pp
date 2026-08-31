@@ -8,11 +8,12 @@ android {
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        applicationId = "com.roomvision.filters"
+        // Separate package so 5.2 cannot accidentally launch an older 4.x/5.1 install.
+        applicationId = "com.roomvision.modern"
         minSdk = 29
         targetSdk = 36
-        versionCode = 51
-        versionName = "5.1.0"
+        versionCode = 52
+        versionName = "5.2.0"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -52,10 +53,9 @@ dependencies {
     implementation("androidx.camera:camera-camera2:1.4.2")
     implementation("androidx.camera:camera-lifecycle:1.4.2")
 
-    // Modern 2026 world-rendering stack.
     implementation("com.google.android.filament:filament-android:1.75.1")
     implementation("com.google.ai.edge.litert:litert:2.2.0")
     implementation("com.google.mediapipe:tasks-vision:1.0.0")
 
-    // AGSL RuntimeShader is provided by Android 13+ and used directly by Gothic.
+    // AGSL RuntimeShader is provided by Android 13+ and is used by Gothic directly.
 }
