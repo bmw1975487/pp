@@ -33,20 +33,21 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class NeuralCameraController {
-    private static final String TAG = "RoomVisionGothic52";
+    private static final String TAG = "RoomVisionGothic53";
     private final ComponentActivity activity;
     private final ImageView outputView;
     private final TextView statusView;
     private final TextView modeView;
     private final ExecutorService analysisExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService visionExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean processing = new AtomicBoolean(false);
 
     private ProcessCameraProvider cameraProvider;
     private OpenCvFilterEngine artEngine;
     private MatrixEffectEngine matrixEngine;
-    private ModernEngineStack modernStack;
-    private AgslGothicRenderer gothicGpu;
-    private QuestObjectDetector questVision;
+    private CgeGothicEngine cgeGothic;
+    private AgslGothicRenderer gothicGpuFallback;
+    private volatile QuestObjectDetector questVision;
 
     private volatile FilterType currentFilter = FilterType.GOTHIC;
     private volatile Bitmap lastStyled;
@@ -66,27 +67,30 @@ final class NeuralCameraController {
 
     void start() {
         stopped = false;
-        setStatus("ЗАГРУЗКА GOTHIC WORLD + MODERN STACK…");
+        setStatus("GOTHIC ENGINE • STARTING CAMERA…");
+
+        // Critical stability rule: camera starts first. Filament / MediaPipe / LiteRT are never
+        // allowed to block or crash the initial camera path. GPUImage Gothic is lazy per mode.
         analysisExecutor.execute(() -> {
             matrixEngine = new MatrixEffectEngine();
             artEngine = new OpenCvFilterEngine();
+            cgeGothic = new CgeGothicEngine(activity);
+            if (!stopped) activity.runOnUiThread(this::bindCamera);
+        });
 
-            modernStack = new ModernEngineStack();
-            modernStack.initialize();
-            if (Build.VERSION.SDK_INT >= 33 && modernStack.isAgslAvailable()) {
-                try { gothicGpu = new AgslGothicRenderer(); }
-                catch (Throwable t) { Log.w(TAG, "AGSL Gothic unavailable", t); gothicGpu = null; }
-            }
-
-            questVision = new QuestObjectDetector();
-            questVision.initialize(activity);
-
+        // Quest vision is deliberately delayed and isolated on another thread.
+        visionExecutor.execute(() -> {
+            try { Thread.sleep(2200L); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
             if (stopped) return;
-            String stack = modernStack.describe();
-            activity.runOnUiThread(() -> {
-                statusView.setText("GOTHIC READY • " + stack);
-                bindCamera();
-            });
+            QuestObjectDetector q = new QuestObjectDetector();
+            try {
+                q.initialize(activity);
+                if (!stopped && q.isReady()) questVision = q;
+                else q.close();
+            } catch (Throwable t) {
+                Log.w(TAG, "Quest vision disabled; camera remains active", t);
+                try { q.close(); } catch (Throwable ignored) { }
+            }
         });
     }
 
@@ -97,7 +101,7 @@ final class NeuralCameraController {
 
     private void bindCamera() {
         if (stopped) return;
-        setStatus("ЗАПУСК GOTHIC LIVE CAMERA…");
+        setStatus("ЗАПУСК LIVE CAMERA…");
         ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(activity);
         future.addListener(() -> {
             try {
@@ -110,7 +114,7 @@ final class NeuralCameraController {
                 analysis.setAnalyzer(analysisExecutor, this::analyzeFrame);
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(activity, CameraSelector.DEFAULT_BACK_CAMERA, analysis);
-                setStatus("LIVE • GOTHIC / DRACULA • VISION: FLOWER/PLANT");
+                setStatus("LIVE • GOTHIC / DRACULA • GPUIMAGE READY ON FIRST FRAME");
             } catch (Throwable e) {
                 Log.e(TAG, "Camera bind failed", e);
                 setStatus("ОШИБКА КАМЕРЫ");
@@ -127,11 +131,17 @@ final class NeuralCameraController {
             finally { image.close(); }
             if (raw == null) return;
 
-            if (questVision != null && questVision.isReady()) {
-                String hit = questVision.inspect(raw);
-                if (hit != null) {
-                    lastVisionHit = hit;
-                    lastVisionHitUntil = SystemClock.elapsedRealtime() + 2600L;
+            QuestObjectDetector q = questVision;
+            if (q != null && q.isReady()) {
+                try {
+                    String hit = q.inspect(raw);
+                    if (hit != null) {
+                        lastVisionHit = hit;
+                        lastVisionHitUntil = SystemClock.elapsedRealtime() + 2600L;
+                    }
+                } catch (Throwable t) {
+                    // Vision can fail independently; never let it terminate the live camera.
+                    Log.w(TAG, "Vision frame ignored", t);
                 }
             }
 
@@ -140,12 +150,9 @@ final class NeuralCameraController {
             Bitmap styled;
             String engineName;
             try {
-                if (requested == FilterType.GOTHIC && gothicGpu != null && Build.VERSION.SDK_INT >= 33) {
-                    styled = gothicGpu.render(raw, SystemClock.uptimeMillis());
-                    engineName = "GOTHIC DRACULA • AGSL GPU";
-                } else if (requested == FilterType.GOTHIC) {
-                    styled = artEngine.process(raw, requested);
-                    engineName = "GOTHIC DRACULA • CPU FALLBACK";
+                if (requested == FilterType.GOTHIC) {
+                    styled = renderGothic(raw);
+                    engineName = gothicEngineLabel();
                 } else if (requested == FilterType.MATRIX) {
                     styled = matrixEngine.process(raw);
                     engineName = "MATRIX WORLD";
@@ -172,10 +179,8 @@ final class NeuralCameraController {
                 StringBuilder s = new StringBuilder();
                 s.append(finalEngineName).append(" • ").append(requested.label)
                         .append(" • ").append(shownFps).append(" FPS • ").append(ms).append(" ms");
-                if (modernStack != null && modernStack.isFilamentAvailable()) {
-                    s.append(" • FILAMENT/").append(modernStack.filamentBackend());
-                }
-                if (questVision != null && questVision.isReady()) s.append(" • VISION");
+                QuestObjectDetector v = questVision;
+                if (v != null && v.isReady()) s.append(" • VISION");
                 if (lastVisionHit != null && SystemClock.elapsedRealtime() < lastVisionHitUntil) {
                     s.append(" • TARGET: ").append(lastVisionHit);
                 }
@@ -186,6 +191,39 @@ final class NeuralCameraController {
             if (raw != null && !raw.isRecycled()) raw.recycle();
             processing.set(false);
         }
+    }
+
+    private Bitmap renderGothic(Bitmap raw) {
+        CgeGothicEngine cge = cgeGothic;
+        if (cge != null) {
+            try {
+                if (!cge.isReady()) cge.initialize();
+                if (cge.isReady()) {
+                    Bitmap result = cge.render(raw);
+                    if (result != null) return result;
+                }
+            } catch (Throwable t) {
+                Log.e(TAG, "CGE Gothic disabled, using fallback", t);
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            try {
+                if (gothicGpuFallback == null) gothicGpuFallback = new AgslGothicRenderer();
+                return gothicGpuFallback.render(raw, SystemClock.uptimeMillis());
+            } catch (Throwable t) {
+                Log.w(TAG, "AGSL fallback unavailable", t);
+                gothicGpuFallback = null;
+            }
+        }
+        return artEngine.process(raw, FilterType.GOTHIC);
+    }
+
+    private String gothicEngineLabel() {
+        CgeGothicEngine cge = cgeGothic;
+        if (cge != null && cge.isReady()) return "GOTHIC • GPUIMAGE PLUS / CASTLE MATERIAL";
+        if (Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null) return "GOTHIC • AGSL FALLBACK";
+        return "GOTHIC • SAFE FALLBACK";
     }
 
     private void updateFps() {
@@ -264,10 +302,11 @@ final class NeuralCameraController {
 
         QuestObjectDetector q = questVision; questVision = null;
         if (q != null) try { q.close(); } catch (Throwable ignored) { }
-        ModernEngineStack m = modernStack; modernStack = null;
-        if (m != null) try { m.close(); } catch (Throwable ignored) { }
-        gothicGpu = null; matrixEngine = null; artEngine = null;
-        analysisExecutor.shutdown();
+        CgeGothicEngine cge = cgeGothic; cgeGothic = null;
+        if (cge != null) try { cge.close(); } catch (Throwable ignored) { }
+        gothicGpuFallback = null; matrixEngine = null; artEngine = null;
+        analysisExecutor.shutdownNow();
+        visionExecutor.shutdownNow();
     }
 
     private void setStatus(String text) { activity.runOnUiThread(() -> statusView.setText(text)); }
