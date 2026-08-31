@@ -8,11 +8,11 @@ android {
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        applicationId = "com.roomvision.neural"
+        applicationId = "com.roomvision.filters"
         minSdk = 29
         targetSdk = 36
-        versionCode = 20
-        versionName = "2.0.0"
+        versionCode = 30
+        versionName = "3.0.0"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -53,4 +53,5 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.4.2")
     implementation("org.tensorflow:tensorflow-lite:2.17.0")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
+    implementation("org.opencv:opencv:4.13.0")
 }
