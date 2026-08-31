@@ -6,8 +6,9 @@ import java.util.List;
 public enum FilterType {
     MATRIX("Matrix"),
     CRAYON("Crayon"),
+    BLUE_PEN("Blue Pen"),
     ASCII("ASCII"),
-    BLUEPRINT("Blueprint");
+    GOTHIC("Gothic");
 
     public final String label;
     FilterType(String label) { this.label = label; }
