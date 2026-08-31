@@ -1,4 +1,4 @@
-name: RoomVision Gothic Full APK
+name: RoomVision Gothic Diagnostic APK
 
 on:
   pull_request:
@@ -67,7 +67,7 @@ jobs:
           fi
           exit "$RC"
 
-      - name: Verify full APK
+      - name: Verify diagnostic APK
         shell: bash
         run: |
           set -euo pipefail
@@ -83,8 +83,8 @@ jobs:
           "$SDKROOT/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
           "$SDKROOT/build-tools/35.0.0/aapt" dump badging "$APK" | head -n 20
           mkdir -p roomvision_dist
-          cp "$APK" roomvision_dist/RoomVision_Gothic_1.0.0.apk
-          sha256sum roomvision_dist/RoomVision_Gothic_1.0.0.apk > roomvision_dist/RoomVision_Gothic_1.0.0.apk.sha256
+          cp "$APK" roomvision_dist/RoomVision_Gothic_1.0.1_DIAGNOSTIC.apk
+          sha256sum roomvision_dist/RoomVision_Gothic_1.0.1_DIAGNOSTIC.apk > roomvision_dist/RoomVision_Gothic_1.0.1_DIAGNOSTIC.apk.sha256
 
       - name: Package complete source
         shell: bash
@@ -92,14 +92,14 @@ jobs:
           set -euo pipefail
           rm -rf roomvision_gothic_demo/.gradle roomvision_gothic_demo/app/build roomvision_gothic_demo/build
           cd roomvision_gothic_demo
-          zip -qr ../roomvision_dist/RoomVision_Gothic_1.0.0_Source.zip . -x '*.DS_Store'
+          zip -qr ../roomvision_dist/RoomVision_Gothic_1.0.1_DIAGNOSTIC_Source.zip . -x '*.DS_Store'
           cd ..
-          test -s roomvision_dist/RoomVision_Gothic_1.0.0_Source.zip
+          test -s roomvision_dist/RoomVision_Gothic_1.0.1_DIAGNOSTIC_Source.zip
 
-      - name: Upload full build
+      - name: Upload diagnostic build
         uses: actions/upload-artifact@v4
         with:
-          name: RoomVision_Gothic_1.0.0_FULL
+          name: RoomVision_Gothic_1.0.1_DIAGNOSTIC_FULL
           path: roomvision_dist/*
           if-no-files-found: error
           retention-days: 7
