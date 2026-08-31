@@ -40,8 +40,9 @@ final class NeuralCameraController {
     private final AtomicBoolean processing = new AtomicBoolean(false);
     private ProcessCameraProvider cameraProvider;
     private OpenCvFilterEngine fastEngine;
+    private MatrixEffectEngine matrixEngine;
     private NeuralStyleEngine neuralEngine;
-    private volatile FilterType currentFilter = FilterType.CARTOON_HD;
+    private volatile FilterType currentFilter = FilterType.MATRIX;
     private volatile Bitmap lastStyled;
     private volatile boolean stopped;
     private int renderedFrames;
@@ -59,6 +60,7 @@ final class NeuralCameraController {
         stopped = false;
         setStatus("ЗАГРУЗКА ФИЛЬТРОВ…");
         analysisExecutor.execute(() -> {
+            matrixEngine = new MatrixEffectEngine();
             try { fastEngine = new OpenCvFilterEngine(); }
             catch (Throwable e) { Log.e(TAG, "OpenCV init failed", e); fastEngine = null; }
             try {
@@ -118,7 +120,10 @@ final class NeuralCameraController {
         Bitmap styled;
         boolean fallback = false;
         try {
-            if (requested.neural) {
+            if (requested == FilterType.MATRIX) {
+                if (matrixEngine == null) throw new IllegalStateException("matrix engine unavailable");
+                styled = matrixEngine.process(raw);
+            } else if (requested.neural) {
                 if (neuralEngine == null) throw new IllegalStateException("neural unavailable");
                 styled = neuralEngine.processFrame(raw, requested);
             } else if (fastEngine != null) {
@@ -131,7 +136,8 @@ final class NeuralCameraController {
             fallback = true;
             rendered = fallbackFor(requested);
             try {
-                if (fastEngine != null) styled = fastEngine.process(raw, rendered);
+                if (rendered == FilterType.MATRIX && matrixEngine != null) styled = matrixEngine.process(raw);
+                else if (fastEngine != null) styled = fastEngine.process(raw, rendered);
                 else styled = raw.copy(Bitmap.Config.ARGB_8888, false);
             } catch (Throwable second) {
                 Log.e(TAG, "Fallback failed", second);
@@ -150,7 +156,10 @@ final class NeuralCameraController {
             Bitmap prev = lastStyled;
             lastStyled = ready;
             outputView.setImageBitmap(ready);
-            String engine = finalRendered.neural ? (neuralEngine != null && neuralEngine.isGpuEnabled() ? "AI GPU" : "AI CPU") : "LIVE";
+            String engine;
+            if (finalRendered == FilterType.MATRIX) engine = "WORLD FX";
+            else if (finalRendered.neural) engine = neuralEngine != null && neuralEngine.isGpuEnabled() ? "AI GPU" : "AI CPU";
+            else engine = "LIVE";
             statusView.setText(String.format(Locale.US, "%s • %s • %d FPS • %d ms%s",
                     engine, finalRendered.label, shownFps, ms, finalFallback ? " • SAFE FALLBACK" : ""));
             if (prev != null && prev != ready && !prev.isRecycled()) prev.recycle();
@@ -163,6 +172,7 @@ final class NeuralCameraController {
     private FilterType fallbackFor(FilterType t) {
         if (t == FilterType.VAN_GOGH) return FilterType.PIXEL_OIL;
         if (t == FilterType.KANDINSKY) return FilterType.COLOR_SKETCH;
+        if (t == FilterType.MATRIX) return FilterType.PIXEL_CYBERPUNK;
         return FilterType.ORIGINAL;
     }
 
@@ -245,6 +255,7 @@ final class NeuralCameraController {
             analysisExecutor.execute(() -> {
                 NeuralStyleEngine n = neuralEngine;
                 neuralEngine = null;
+                matrixEngine = null;
                 if (n != null) try { n.close(); } catch (Throwable ignored) { }
             });
         } catch (Throwable ignored) { }
