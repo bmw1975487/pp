@@ -31,253 +31,122 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class NeuralCameraController {
-    private static final String TAG = "RoomVisionNeural";
-
+    private static final String TAG = "RoomVisionFilters";
     private final ComponentActivity activity;
     private final ImageView outputView;
     private final TextView statusView;
+    private final TextView modeView;
     private final ExecutorService analysisExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean processing = new AtomicBoolean(false);
-
     private ProcessCameraProvider cameraProvider;
-    private NeuralStyleEngine engine;
+    private OpenCvFilterEngine fastEngine;
+    private NeuralStyleEngine neuralEngine;
+    private volatile FilterType currentFilter = FilterType.CARTOON;
     private volatile Bitmap lastStyled;
     private volatile boolean stopped;
-    private int consecutiveSlow;
-    private int consecutiveFast;
     private int renderedFrames;
     private long fpsWindowStart = System.currentTimeMillis();
     private int shownFps;
 
-    NeuralCameraController(ComponentActivity activity, ImageView outputView, TextView statusView) {
-        this.activity = activity;
-        this.outputView = outputView;
-        this.statusView = statusView;
+    NeuralCameraController(ComponentActivity activity, ImageView outputView, TextView statusView, TextView modeView) {
+        this.activity=activity; this.outputView=outputView; this.statusView=statusView; this.modeView=modeView;
     }
 
     void start() {
-        stopped = false;
-        setStatus("ЗАГРУЗКА НЕЙРОДВИЖКА…");
+        stopped=false; setStatus("ЗАГРУЗКА ФИЛЬТРОВ…");
         analysisExecutor.execute(() -> {
-            try {
-                engine = new NeuralStyleEngine(activity);
-                engine.initialize();
-                if (stopped) {
-                    try { engine.close(); } catch (Throwable ignored) { }
-                    engine = null;
-                    return;
-                }
-                activity.runOnUiThread(this::bindCamera);
-            } catch (Throwable error) {
-                Log.e(TAG, "Neural engine init failed", error);
-                setStatus("ОШИБКА НЕЙРОДВИЖКА");
-            }
+            try { fastEngine=new OpenCvFilterEngine(); }
+            catch(Throwable e){ Log.e(TAG,"OpenCV init failed",e); fastEngine=null; }
+            try { neuralEngine=new NeuralStyleEngine(activity); neuralEngine.initialize(); }
+            catch(Throwable e){ Log.w(TAG,"Neural engine unavailable; fast filters remain active",e); if(neuralEngine!=null)try{neuralEngine.close();}catch(Throwable ignored){} neuralEngine=null; }
+            if(stopped)return;
+            activity.runOnUiThread(this::bindCamera);
         });
     }
 
+    void setFilter(FilterType type) {
+        currentFilter=type==null?FilterType.ORIGINAL:type;
+        activity.runOnUiThread(() -> modeView.setText(currentFilter.label.toUpperCase(Locale.ROOT)));
+    }
+
+    FilterType getFilter(){ return currentFilter; }
+
     private void bindCamera() {
-        if (stopped) return;
-        setStatus("ЗАПУСК КАМЕРЫ…");
-        ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(activity);
+        if(stopped)return; setStatus("ЗАПУСК КАМЕРЫ…");
+        ListenableFuture<ProcessCameraProvider> future=ProcessCameraProvider.getInstance(activity);
         future.addListener(() -> {
             try {
-                cameraProvider = future.get();
-                ImageAnalysis analysis = new ImageAnalysis.Builder()
-                        .setTargetResolution(new Size(1280, 720))
+                cameraProvider=future.get();
+                ImageAnalysis analysis=new ImageAnalysis.Builder()
+                        .setTargetResolution(new Size(960,540))
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                         .build();
-                analysis.setAnalyzer(analysisExecutor, this::analyzeFrame);
-                cameraProvider.unbindAll();
-                cameraProvider.bindToLifecycle(activity, CameraSelector.DEFAULT_BACK_CAMERA, analysis);
-                setStatus("NEURAL LIVE");
-            } catch (Throwable error) {
-                Log.e(TAG, "Camera bind failed", error);
-                setStatus("ОШИБКА КАМЕРЫ");
-            }
+                analysis.setAnalyzer(analysisExecutor,this::analyzeFrame);
+                cameraProvider.unbindAll(); cameraProvider.bindToLifecycle(activity, CameraSelector.DEFAULT_BACK_CAMERA, analysis);
+                setStatus("LIVE • "+currentFilter.label);
+            } catch(Throwable e){Log.e(TAG,"Camera bind failed",e);setStatus("ОШИБКА КАМЕРЫ");}
         }, ContextCompat.getMainExecutor(activity));
     }
 
     private void analyzeFrame(ImageProxy image) {
-        if (stopped || engine == null || !processing.compareAndSet(false, true)) {
-            image.close();
-            return;
-        }
-        Bitmap raw = null;
+        if(stopped||!processing.compareAndSet(false,true)){image.close();return;}
+        Bitmap raw=null;
+        try {raw=imageProxyToBitmap(image);} catch(Throwable e){Log.e(TAG,"Frame conversion failed",e);} finally{image.close();}
+        if(raw==null){processing.set(false);return;}
+        long started=System.nanoTime();
+        FilterType requested=currentFilter;
+        FilterType rendered=requested;
+        Bitmap styled=null;
+        boolean fallback=false;
         try {
-            raw = imageProxyToBitmap(image);
-        } catch (Throwable conversionError) {
-            Log.e(TAG, "Frame conversion failed", conversionError);
-        } finally {
-            image.close();
-        }
-
-        if (raw == null) {
-            processing.set(false);
-            return;
-        }
-
-        long started = System.nanoTime();
-        try {
-            Bitmap styled = engine.processFrame(raw);
-            long elapsedMs = Math.max(1L, (System.nanoTime() - started) / 1_000_000L);
-            adaptPerformance(elapsedMs);
-            updateFps();
-            if (stopped) {
-                styled.recycle();
-                return;
-            }
-            Bitmap ready = styled;
-            activity.runOnUiThread(() -> {
-                if (stopped || engine == null) {
-                    if (!ready.isRecycled()) ready.recycle();
-                    return;
-                }
-                Bitmap previous = lastStyled;
-                lastStyled = ready;
-                outputView.setImageBitmap(ready);
-                statusView.setText(String.format(Locale.US,
-                        "NEURAL LIVE  •  %s  •  %d px  •  %d FPS  •  %d ms",
-                        engine.isGpuEnabled() ? "GPU" : "CPU",
-                        engine.getLongSide(), shownFps, elapsedMs));
-                if (previous != null && previous != ready && !previous.isRecycled()) previous.recycle();
-            });
-        } catch (Throwable inferenceError) {
-            Log.e(TAG, "Inference failed", inferenceError);
-            setStatus("ОШИБКА ОБРАБОТКИ");
-        } finally {
-            if (!raw.isRecycled()) raw.recycle();
-            processing.set(false);
-        }
-    }
-
-    private void adaptPerformance(long elapsedMs) {
-        if (engine == null) return;
-        if (elapsedMs > 80) {
-            consecutiveSlow++;
-            consecutiveFast = 0;
-            if (consecutiveSlow >= 4) {
-                if (engine.getLongSide() >= 512) engine.setLongSide(384);
-                else if (engine.getLongSide() >= 384) engine.setLongSide(256);
-                consecutiveSlow = 0;
-            }
-        } else if (elapsedMs < 38) {
-            consecutiveFast++;
-            consecutiveSlow = 0;
-            if (consecutiveFast >= 30) {
-                if (engine.getLongSide() <= 256) engine.setLongSide(384);
-                else if (engine.getLongSide() <= 384) engine.setLongSide(512);
-                consecutiveFast = 0;
-            }
-        } else {
-            consecutiveSlow = Math.max(0, consecutiveSlow - 1);
-            consecutiveFast = Math.max(0, consecutiveFast - 1);
-        }
-    }
-
-    private void updateFps() {
-        renderedFrames++;
-        long now = System.currentTimeMillis();
-        long delta = now - fpsWindowStart;
-        if (delta >= 1000) {
-            shownFps = Math.round(renderedFrames * 1000f / delta);
-            renderedFrames = 0;
-            fpsWindowStart = now;
-        }
-    }
-
-    private Bitmap imageProxyToBitmap(ImageProxy image) {
-        ImageProxy.PlaneProxy plane = image.getPlanes()[0];
-        ByteBuffer buffer = plane.getBuffer();
-        buffer.rewind();
-        int width = image.getWidth();
-        int height = image.getHeight();
-        int rowStride = plane.getRowStride();
-        int pixelStride = plane.getPixelStride();
-        int[] pixels = new int[width * height];
-
-        for (int y = 0; y < height; y++) {
-            int row = y * rowStride;
-            for (int x = 0; x < width; x++) {
-                int offset = row + x * pixelStride;
-                if (offset + 3 >= buffer.limit()) break;
-                int r = buffer.get(offset) & 0xFF;
-                int g = buffer.get(offset + 1) & 0xFF;
-                int b = buffer.get(offset + 2) & 0xFF;
-                int a = buffer.get(offset + 3) & 0xFF;
-                pixels[y * width + x] = (a << 24) | (r << 16) | (g << 8) | b;
+            if(requested.neural) {
+                if(neuralEngine==null) throw new IllegalStateException("neural unavailable");
+                styled=neuralEngine.processFrame(raw,requested);
+            } else if(fastEngine!=null) {
+                styled=fastEngine.process(raw,requested);
+            } else styled=raw.copy(Bitmap.Config.ARGB_8888,false);
+        } catch(Throwable e) {
+            Log.w(TAG,"Filter failed: "+requested,e); fallback=true;
+            rendered=fallbackFor(requested);
+            try {
+                if(fastEngine!=null) styled=fastEngine.process(raw,rendered);
+                else styled=raw.copy(Bitmap.Config.ARGB_8888,false);
+            } catch(Throwable second) {
+                Log.e(TAG,"Fallback failed",second); styled=raw.copy(Bitmap.Config.ARGB_8888,false); rendered=FilterType.ORIGINAL;
             }
         }
-
-        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-        bitmap.setPixels(pixels, 0, width, 0, 0, width, height);
-        int rotation = image.getImageInfo().getRotationDegrees();
-        if (rotation == 0) return bitmap;
-        Matrix matrix = new Matrix();
-        matrix.postRotate(rotation);
-        Bitmap rotated = Bitmap.createBitmap(bitmap, 0, 0, width, height, matrix, true);
-        bitmap.recycle();
-        return rotated;
+        long ms=Math.max(1,(System.nanoTime()-started)/1_000_000L); updateFps();
+        Bitmap ready=styled; FilterType finalRendered=rendered; boolean finalFallback=fallback;
+        if(!stopped) activity.runOnUiThread(() -> {
+            if(stopped){if(ready!=null&&!ready.isRecycled())ready.recycle();return;}
+            Bitmap prev=lastStyled; lastStyled=ready; outputView.setImageBitmap(ready);
+            String engine=finalRendered.neural?(neuralEngine!=null&&neuralEngine.isGpuEnabled()?"AI GPU":"AI CPU"):"LIVE";
+            statusView.setText(String.format(Locale.US,"%s • %s • %d FPS • %d ms%s",engine,finalRendered.label,shownFps,ms,finalFallback?" • FALLBACK":""));
+            if(prev!=null&&prev!=ready&&!prev.isRecycled())prev.recycle();
+        }); else if(ready!=null&&!ready.isRecycled()) ready.recycle();
+        if(!raw.isRecycled())raw.recycle(); processing.set(false);
     }
 
-    void captureCurrentFrame() {
-        Bitmap frame = lastStyled;
-        if (frame == null || frame.isRecycled()) {
-            Toast.makeText(activity, "Кадр ещё не готов", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        Bitmap copy = frame.copy(Bitmap.Config.ARGB_8888, false);
-        new Thread(() -> saveBitmap(copy), "RoomVisionNeuralSave").start();
+    private FilterType fallbackFor(FilterType t){
+        if(t==FilterType.NEURAL_CYBERPUNK)return FilterType.CYBERPUNK;
+        if(t==FilterType.NEURAL_VAN_GOGH)return FilterType.OIL_PAINTING;
+        if(t==FilterType.NEURAL_KANDINSKY)return FilterType.PAINTING;
+        return FilterType.ORIGINAL;
     }
 
-    private void saveBitmap(Bitmap bitmap) {
-        String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-        String name = "RoomVision_Neural_Gothic_" + stamp + ".jpg";
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
-        values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-        values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/RoomVisionNeural");
-        values.put(MediaStore.Images.Media.IS_PENDING, 1);
-        Uri uri = activity.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
-        boolean ok = false;
-        if (uri != null) {
-            try (OutputStream out = activity.getContentResolver().openOutputStream(uri)) {
-                ok = out != null && bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out);
-                values.clear();
-                values.put(MediaStore.Images.Media.IS_PENDING, 0);
-                activity.getContentResolver().update(uri, values, null, null);
-            } catch (Throwable error) {
-                Log.e(TAG, "Photo save failed", error);
-            }
-        }
-        bitmap.recycle();
-        boolean saved = ok;
-        activity.runOnUiThread(() -> Toast.makeText(activity,
-                saved ? "Фото сохранено" : "Не удалось сохранить фото", Toast.LENGTH_SHORT).show());
+    private void updateFps(){renderedFrames++;long now=System.currentTimeMillis(),d=now-fpsWindowStart;if(d>=1000){shownFps=Math.round(renderedFrames*1000f/d);renderedFrames=0;fpsWindowStart=now;}}
+
+    private Bitmap imageProxyToBitmap(ImageProxy image){
+        ImageProxy.PlaneProxy plane=image.getPlanes()[0];ByteBuffer buffer=plane.getBuffer();buffer.rewind();
+        int w=image.getWidth(),h=image.getHeight(),rowStride=plane.getRowStride(),pixelStride=plane.getPixelStride();int[]pixels=new int[w*h];
+        for(int y=0;y<h;y++){int row=y*rowStride;for(int x=0;x<w;x++){int o=row+x*pixelStride;if(o+3>=buffer.limit())break;int r=buffer.get(o)&255,g=buffer.get(o+1)&255,b=buffer.get(o+2)&255,a=buffer.get(o+3)&255;pixels[y*w+x]=(a<<24)|(r<<16)|(g<<8)|b;}}
+        Bitmap b=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);b.setPixels(pixels,0,w,0,0,w,h);int rot=image.getImageInfo().getRotationDegrees();if(rot==0)return b;Matrix m=new Matrix();m.postRotate(rot);Bitmap r=Bitmap.createBitmap(b,0,0,w,h,m,true);b.recycle();return r;
     }
 
-    void stop() {
-        stopped = true;
-        if (cameraProvider != null) {
-            try { cameraProvider.unbindAll(); } catch (Throwable ignored) { }
-            cameraProvider = null;
-        }
-        Bitmap frame = lastStyled;
-        lastStyled = null;
-        if (frame != null && !frame.isRecycled()) frame.recycle();
-        try {
-            analysisExecutor.execute(() -> {
-                NeuralStyleEngine current = engine;
-                engine = null;
-                if (current != null) {
-                    try { current.close(); } catch (Throwable ignored) { }
-                }
-            });
-        } catch (Throwable ignored) { }
-        analysisExecutor.shutdown();
-    }
+    void captureCurrentFrame(){Bitmap f=lastStyled;if(f==null||f.isRecycled()){Toast.makeText(activity,"Кадр ещё не готов",Toast.LENGTH_SHORT).show();return;}Bitmap c=f.copy(Bitmap.Config.ARGB_8888,false);new Thread(()->saveBitmap(c),"RoomVisionSave").start();}
+    private void saveBitmap(Bitmap bitmap){String stamp=new SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(new Date());ContentValues v=new ContentValues();v.put(MediaStore.Images.Media.DISPLAY_NAME,"RoomVision_"+stamp+".jpg");v.put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");v.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES+"/RoomVision");v.put(MediaStore.Images.Media.IS_PENDING,1);Uri uri=activity.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,v);boolean ok=false;if(uri!=null){try(OutputStream out=activity.getContentResolver().openOutputStream(uri)){ok=out!=null&&bitmap.compress(Bitmap.CompressFormat.JPEG,95,out);v.clear();v.put(MediaStore.Images.Media.IS_PENDING,0);activity.getContentResolver().update(uri,v,null,null);}catch(Throwable e){Log.e(TAG,"Save failed",e);}}bitmap.recycle();boolean done=ok;activity.runOnUiThread(()->Toast.makeText(activity,done?"Фото сохранено":"Не удалось сохранить фото",Toast.LENGTH_SHORT).show());}
 
-    private void setStatus(String text) {
-        activity.runOnUiThread(() -> statusView.setText(text));
-    }
+    void stop(){stopped=true;if(cameraProvider!=null)try{cameraProvider.unbindAll();}catch(Throwable ignored){}cameraProvider=null;Bitmap f=lastStyled;lastStyled=null;if(f!=null&&!f.isRecycled())f.recycle();try{analysisExecutor.execute(()->{NeuralStyleEngine n=neuralEngine;neuralEngine=null;if(n!=null)try{n.close();}catch(Throwable ignored){}});}catch(Throwable ignored){}analysisExecutor.shutdown();}
+    private void setStatus(String text){activity.runOnUiThread(()->statusView.setText(text));}
 }
