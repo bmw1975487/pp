@@ -11,15 +11,8 @@ android {
         applicationId = "com.roomvision.filters"
         minSdk = 29
         targetSdk = 36
-        versionCode = 42
-        versionName = "4.2.0"
-        ndk {
-            abiFilters += listOf("arm64-v8a")
-        }
-    }
-
-    androidResources {
-        noCompress += "tflite"
+        versionCode = 43
+        versionName = "4.3.0"
     }
 
     buildTypes {
@@ -39,7 +32,7 @@ android {
     }
 
     lint {
-        disable += setOf("MissingPermission", "GestureBackNavigation", "WrongThread", "UnsafeOptInUsageError")
+        disable += setOf("MissingPermission", "GestureBackNavigation", "WrongThread")
         abortOnError = true
         warningsAsErrors = false
     }
@@ -51,7 +44,4 @@ dependencies {
     implementation("androidx.camera:camera-core:1.4.2")
     implementation("androidx.camera:camera-camera2:1.4.2")
     implementation("androidx.camera:camera-lifecycle:1.4.2")
-    implementation("org.tensorflow:tensorflow-lite:2.17.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
-    implementation("org.opencv:opencv:4.13.0")
 }
