@@ -1,0 +1,58 @@
+name: Fetch original Cambrian Home Harmony APK
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-apk:
+    if: startsWith(github.head_ref, 'chatgpt/home-harmony-original-') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download published Home Harmony 2.0.3b APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://d.apkpure.net/b/APK/com.cambriantech.paintharmonylite?version=latest'
+          curl -fL --retry 3 --retry-delay 2 -A 'Mozilla/5.0' "$URL" -o Home_Harmony_2.0.3b_Cambrian.apk
+          test -s Home_Harmony_2.0.3b_Cambrian.apk
+          SIZE=$(stat -c%s Home_Harmony_2.0.3b_Cambrian.apk)
+          echo "APK_BYTES=$SIZE"
+          test "$SIZE" -gt 12000000
+          test "$SIZE" -lt 17000000
+          unzip -t Home_Harmony_2.0.3b_Cambrian.apk >/dev/null
+
+      - name: Verify package and publisher signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          AAPT=$(find "$SDKROOT/build-tools" -type f -name aapt -perm -111 | sort -V | tail -n1)
+          APKSIGNER=$(find "$SDKROOT/build-tools" -type f -name apksigner -perm -111 | sort -V | tail -n1)
+          test -n "$AAPT"
+          test -n "$APKSIGNER"
+          "$AAPT" dump badging Home_Harmony_2.0.3b_Cambrian.apk | tee badging.txt
+          grep -q "package: name='com.cambriantech.paintharmonylite'" badging.txt
+          "$APKSIGNER" verify --verbose --print-certs Home_Harmony_2.0.3b_Cambrian.apk | tee signature.txt
+          grep -qi '4fd619318267ccd0d71fb0237137b16f1b7479c0' signature.txt
+          sha256sum Home_Harmony_2.0.3b_Cambrian.apk | tee Home_Harmony_2.0.3b_Cambrian.apk.sha256
+
+      - name: Upload verified original APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Home_Harmony_2.0.3b_Original_Cambrian
+          path: |
+            Home_Harmony_2.0.3b_Cambrian.apk
+            Home_Harmony_2.0.3b_Cambrian.apk.sha256
+            badging.txt
+            signature.txt
+          if-no-files-found: error
+          retention-days: 7
