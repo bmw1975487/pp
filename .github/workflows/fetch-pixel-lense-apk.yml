@@ -22,30 +22,33 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install direct Google Play downloader
+      - name: Install multi-source APK downloader
         shell: bash
         run: |
           set -euxo pipefail
           python -m pip install --upgrade pip
-          python -m pip install 'goopdl>=1.0.0'
-          goopdl --help | head -n 40
+          python -m pip install 'git+https://github.com/kiber-io/apkd.git'
+          apkd --help | head -n 50
 
-      - name: Anonymous Google Play authentication
+      - name: Search and download exact package from all sources
         shell: bash
         run: |
-          set -euxo pipefail
-          goopdl auth --country US
-
-      - name: Download exact Google Play package
-        shell: bash
-        run: |
-          set -euxo pipefail
+          set -u
           mkdir -p pixel_lense_download
-          goopdl info com.hiro.pixellense --country US
-          goopdl download com.hiro.pixellense -o pixel_lense_download --country US --no-extras
+          cd pixel_lense_download
+          for SRC in apkpure apkcombo rustore rumarket appgallery nashstore; do
+            echo "===== SOURCE: $SRC ====="
+            mkdir -p "$SRC"
+            cd "$SRC"
+            apkd -p com.hiro.pixellense -lv -s "$SRC" || true
+            apkd -p com.hiro.pixellense -d -s "$SRC" || true
+            cd ..
+          done
           echo '--- downloaded files ---'
-          find pixel_lense_download -maxdepth 2 -type f -printf '%p %s bytes\n' | sort
-          test -n "$(find pixel_lense_download -type f -name '*.apk' -print -quit)"
+          find . -type f -printf '%p %s bytes\n' | sort
+          COUNT="$(find . -type f \( -name '*.apk' -o -name '*.xapk' -o -name '*.apks' \) | wc -l)"
+          echo "PACKAGE_FILES=$COUNT"
+          test "$COUNT" -gt 0
 
       - name: Ensure Android verification tools
         shell: bash
@@ -59,53 +62,67 @@ jobs:
             "$SDKMANAGER" 'build-tools;35.0.0' 'platform-tools'
           fi
 
-      - name: Verify package and original signatures
+      - name: Extract and verify exact Pixel Lense package
         shell: bash
         run: |
           set -euxo pipefail
           SDKROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
           AAPT="$(find "$SDKROOT/build-tools" -type f -name aapt -perm -111 | sort -V | tail -n 1)"
           APKSIGNER="$(find "$SDKROOT/build-tools" -type f -name apksigner -perm -111 | sort -V | tail -n 1)"
-          mkdir -p pixel_lense_dist
+          rm -rf pixel_extracted pixel_lense_dist
+          mkdir -p pixel_extracted pixel_lense_dist
 
-          BASE=''
-          EXPECTED_SIGNER=''
+          # Copy raw APKs and unpack XAPK/APKS containers.
+          find pixel_lense_download -type f -name '*.apk' -exec cp -n {} pixel_extracted/ \;
+          while IFS= read -r BUNDLE; do
+            D="pixel_extracted/bundle_$(echo "$BUNDLE" | sha1sum | cut -c1-10)"
+            mkdir -p "$D"
+            unzip -q "$BUNDLE" -d "$D" || true
+          done < <(find pixel_lense_download -type f \( -name '*.xapk' -o -name '*.apks' \))
+
           : > pixel_lense_dist/VERIFY.txt
-          for APK in $(find pixel_lense_download -type f -name '*.apk' | sort); do
-            BADGING="$($AAPT dump badging "$APK")"
-            echo "$BADGING" | grep -F "package: name='com.hiro.pixellense'"
+          FOUND=0
+          IDX=0
+          EXPECTED_SIGNER=''
+          BASE=''
+          while IFS= read -r APK; do
+            BADGING="$($AAPT dump badging "$APK" 2>/dev/null || true)"
+            if ! echo "$BADGING" | grep -q "package: name='com.hiro.pixellense'"; then
+              continue
+            fi
+            FOUND=$((FOUND+1))
             CERT="$($APKSIGNER verify --verbose --print-certs "$APK")"
-            echo "===== $APK =====" >> pixel_lense_dist/VERIFY.txt
-            echo "$BADGING" | head -n 20 >> pixel_lense_dist/VERIFY.txt
-            echo >> pixel_lense_dist/VERIFY.txt
-            echo "$CERT" >> pixel_lense_dist/VERIFY.txt
-            echo >> pixel_lense_dist/VERIFY.txt
             SIGNER="$(echo "$CERT" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
             test -n "$SIGNER"
             if [[ -z "$EXPECTED_SIGNER" ]]; then EXPECTED_SIGNER="$SIGNER"; fi
             test "$SIGNER" = "$EXPECTED_SIGNER"
+            echo "===== $APK =====" >> pixel_lense_dist/VERIFY.txt
+            echo "$BADGING" | head -n 25 >> pixel_lense_dist/VERIFY.txt
+            echo >> pixel_lense_dist/VERIFY.txt
+            echo "$CERT" >> pixel_lense_dist/VERIFY.txt
+            echo >> pixel_lense_dist/VERIFY.txt
+            IDX=$((IDX+1))
+            cp "$APK" "pixel_lense_dist/Pixel_Lense_part_${IDX}.apk"
             if ! echo "$BADGING" | head -n 1 | grep -q " split='"; then BASE="$APK"; fi
-          done
-          test -n "$BASE"
-          echo "BASE_APK=$BASE"
-          echo "SIGNER_SHA256=$EXPECTED_SIGNER"
-          cp "$BASE" pixel_lense_dist/Pixel_Lense_BASE_original.apk
-          sha256sum pixel_lense_dist/Pixel_Lense_BASE_original.apk > pixel_lense_dist/Pixel_Lense_BASE_original.apk.sha256
+          done < <(find pixel_extracted -type f -name '*.apk' | sort)
 
-          APK_COUNT="$(find pixel_lense_download -type f -name '*.apk' | wc -l)"
-          echo "APK_COUNT=$APK_COUNT" | tee -a pixel_lense_dist/VERIFY.txt
-          if [[ "$APK_COUNT" -eq 1 ]]; then
+          echo "FOUND_EXACT_APKS=$FOUND" | tee -a pixel_lense_dist/VERIFY.txt
+          echo "SIGNER_SHA256=$EXPECTED_SIGNER" | tee -a pixel_lense_dist/VERIFY.txt
+          test "$FOUND" -gt 0
+          test -n "$BASE"
+          cp "$BASE" pixel_lense_dist/Pixel_Lense_BASE_original.apk
+          sha256sum pixel_lense_dist/*.apk > pixel_lense_dist/SHA256SUMS.txt
+
+          if [[ "$FOUND" -eq 1 ]]; then
             cp "$BASE" pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk
-            sha256sum pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk > pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk.sha256
           else
-            (cd pixel_lense_download && zip -q ../pixel_lense_dist/Pixel_Lense_Original_GooglePlay_Splits.zip ./*.apk)
-            sha256sum pixel_lense_dist/Pixel_Lense_Original_GooglePlay_Splits.zip > pixel_lense_dist/Pixel_Lense_Original_GooglePlay_Splits.zip.sha256
+            (cd pixel_lense_dist && zip -q Pixel_Lense_Original_Splits.zip Pixel_Lense_part_*.apk)
           fi
 
       - name: Upload verified original package
         uses: actions/upload-artifact@v4
         with:
-          name: Pixel_Lense_Camera_into_Art_ORIGINAL_GOOGLE_PLAY
+          name: Pixel_Lense_Camera_into_Art_ORIGINAL
           path: pixel_lense_dist/*
           if-no-files-found: error
           retention-days: 7
