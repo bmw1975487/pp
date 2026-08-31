@@ -31,7 +31,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class NeuralCameraController {
-    private static final String TAG = "RoomVisionFilters";
+    private static final String TAG = "RoomVision4Modes";
     private final ComponentActivity activity;
     private final ImageView outputView;
     private final TextView statusView;
@@ -39,9 +39,8 @@ final class NeuralCameraController {
     private final ExecutorService analysisExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean processing = new AtomicBoolean(false);
     private ProcessCameraProvider cameraProvider;
-    private OpenCvFilterEngine fastEngine;
+    private OpenCvFilterEngine artEngine;
     private MatrixEffectEngine matrixEngine;
-    private NeuralStyleEngine neuralEngine;
     private volatile FilterType currentFilter = FilterType.MATRIX;
     private volatile Bitmap lastStyled;
     private volatile boolean stopped;
@@ -58,30 +57,18 @@ final class NeuralCameraController {
 
     void start() {
         stopped = false;
-        setStatus("ЗАГРУЗКА ФИЛЬТРОВ…");
+        setStatus("ЗАГРУЗКА 4 РЕЖИМОВ…");
         analysisExecutor.execute(() -> {
             matrixEngine = new MatrixEffectEngine();
-            try { fastEngine = new OpenCvFilterEngine(); }
-            catch (Throwable e) { Log.e(TAG, "OpenCV init failed", e); fastEngine = null; }
-            try {
-                neuralEngine = new NeuralStyleEngine(activity);
-                neuralEngine.initialize();
-            } catch (Throwable e) {
-                Log.w(TAG, "Neural engine unavailable; fast filters remain active", e);
-                if (neuralEngine != null) try { neuralEngine.close(); } catch (Throwable ignored) { }
-                neuralEngine = null;
-            }
-            if (stopped) return;
-            activity.runOnUiThread(this::bindCamera);
+            artEngine = new OpenCvFilterEngine();
+            if (!stopped) activity.runOnUiThread(this::bindCamera);
         });
     }
 
     void setFilter(FilterType type) {
-        currentFilter = type == null ? FilterType.ORIGINAL : type;
+        currentFilter = type == null ? FilterType.MATRIX : type;
         activity.runOnUiThread(() -> modeView.setText(currentFilter.label.toUpperCase(Locale.ROOT)));
     }
-
-    FilterType getFilter() { return currentFilter; }
 
     private void bindCamera() {
         if (stopped) return;
@@ -116,64 +103,29 @@ final class NeuralCameraController {
 
         long started = System.nanoTime();
         FilterType requested = currentFilter;
-        FilterType rendered = requested;
         Bitmap styled;
-        boolean fallback = false;
         try {
-            if (requested == FilterType.MATRIX) {
-                if (matrixEngine == null) throw new IllegalStateException("matrix engine unavailable");
-                styled = matrixEngine.process(raw);
-            } else if (requested.neural) {
-                if (neuralEngine == null) throw new IllegalStateException("neural unavailable");
-                styled = neuralEngine.processFrame(raw, requested);
-            } else if (fastEngine != null) {
-                styled = fastEngine.process(raw, requested);
-            } else {
-                styled = raw.copy(Bitmap.Config.ARGB_8888, false);
-            }
+            styled = requested == FilterType.MATRIX ? matrixEngine.process(raw) : artEngine.process(raw, requested);
         } catch (Throwable e) {
-            Log.w(TAG, "Filter failed: " + requested, e);
-            fallback = true;
-            rendered = fallbackFor(requested);
-            try {
-                if (rendered == FilterType.MATRIX && matrixEngine != null) styled = matrixEngine.process(raw);
-                else if (fastEngine != null) styled = fastEngine.process(raw, rendered);
-                else styled = raw.copy(Bitmap.Config.ARGB_8888, false);
-            } catch (Throwable second) {
-                Log.e(TAG, "Fallback failed", second);
-                styled = raw.copy(Bitmap.Config.ARGB_8888, false);
-                rendered = FilterType.ORIGINAL;
-            }
+            Log.e(TAG, "Mode failed: " + requested, e);
+            styled = raw.copy(Bitmap.Config.ARGB_8888, false);
         }
 
         long ms = Math.max(1, (System.nanoTime() - started) / 1_000_000L);
         updateFps();
         Bitmap ready = styled;
-        FilterType finalRendered = rendered;
-        boolean finalFallback = fallback;
         if (!stopped) activity.runOnUiThread(() -> {
             if (stopped) { if (ready != null && !ready.isRecycled()) ready.recycle(); return; }
             Bitmap prev = lastStyled;
             lastStyled = ready;
             outputView.setImageBitmap(ready);
-            String engine;
-            if (finalRendered == FilterType.MATRIX) engine = "WORLD FX";
-            else if (finalRendered.neural) engine = neuralEngine != null && neuralEngine.isGpuEnabled() ? "AI GPU" : "AI CPU";
-            else engine = "LIVE";
-            statusView.setText(String.format(Locale.US, "%s • %s • %d FPS • %d ms%s",
-                    engine, finalRendered.label, shownFps, ms, finalFallback ? " • SAFE FALLBACK" : ""));
+            String engine = requested == FilterType.MATRIX ? "WORLD FX" : "LIVE ART";
+            statusView.setText(String.format(Locale.US, "%s • %s • %d FPS • %d ms", engine, requested.label, shownFps, ms));
             if (prev != null && prev != ready && !prev.isRecycled()) prev.recycle();
         }); else if (ready != null && !ready.isRecycled()) ready.recycle();
 
         if (!raw.isRecycled()) raw.recycle();
         processing.set(false);
-    }
-
-    private FilterType fallbackFor(FilterType t) {
-        if (t == FilterType.VAN_GOGH) return FilterType.PIXEL_OIL;
-        if (t == FilterType.KANDINSKY) return FilterType.COLOR_SKETCH;
-        if (t == FilterType.MATRIX) return FilterType.PIXEL_CYBERPUNK;
-        return FilterType.ORIGINAL;
     }
 
     private void updateFps() {
@@ -201,15 +153,15 @@ final class NeuralCameraController {
                 pixels[y * w + x] = (a << 24) | (r << 16) | (g << 8) | b;
             }
         }
-        Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        b.setPixels(pixels, 0, w, 0, 0, w, h);
+        Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        bitmap.setPixels(pixels, 0, w, 0, 0, w, h);
         int rot = image.getImageInfo().getRotationDegrees();
-        if (rot == 0) return b;
+        if (rot == 0) return bitmap;
         Matrix m = new Matrix();
         m.postRotate(rot);
-        Bitmap r = Bitmap.createBitmap(b, 0, 0, w, h, m, true);
-        b.recycle();
-        return r;
+        Bitmap rotated = Bitmap.createBitmap(bitmap, 0, 0, w, h, m, true);
+        bitmap.recycle();
+        return rotated;
     }
 
     void captureCurrentFrame() {
@@ -234,8 +186,7 @@ final class NeuralCameraController {
         if (uri != null) {
             try (OutputStream out = activity.getContentResolver().openOutputStream(uri)) {
                 ok = out != null && bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out);
-                v.clear();
-                v.put(MediaStore.Images.Media.IS_PENDING, 0);
+                v.clear(); v.put(MediaStore.Images.Media.IS_PENDING, 0);
                 activity.getContentResolver().update(uri, v, null, null);
             } catch (Throwable e) { Log.e(TAG, "Save failed", e); }
         }
@@ -248,17 +199,9 @@ final class NeuralCameraController {
         stopped = true;
         if (cameraProvider != null) try { cameraProvider.unbindAll(); } catch (Throwable ignored) { }
         cameraProvider = null;
-        Bitmap f = lastStyled;
-        lastStyled = null;
+        Bitmap f = lastStyled; lastStyled = null;
         if (f != null && !f.isRecycled()) f.recycle();
-        try {
-            analysisExecutor.execute(() -> {
-                NeuralStyleEngine n = neuralEngine;
-                neuralEngine = null;
-                matrixEngine = null;
-                if (n != null) try { n.close(); } catch (Throwable ignored) { }
-            });
-        } catch (Throwable ignored) { }
+        matrixEngine = null; artEngine = null;
         analysisExecutor.shutdown();
     }
 
