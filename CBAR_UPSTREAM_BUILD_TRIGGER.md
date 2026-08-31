@@ -1,0 +1,1 @@
+Build trigger for original CambrianTech/cb-mobile-sdk Android Harmony APK. No custom camera renderer is used in this branch.
