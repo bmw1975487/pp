@@ -40,10 +40,10 @@ public class MainActivity extends ComponentActivity {
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setGravity(Gravity.CENTER);root.setPadding(dp(24),dp(32),dp(24),dp(32));root.setBackgroundColor(Color.rgb(7,8,12));
         TextView brand=label("ROOM VISION LIVE",14,Color.rgb(77,225,238),Gravity.CENTER);brand.setTypeface(Typeface.DEFAULT,Typeface.BOLD);brand.setLetterSpacing(.15f);root.addView(brand,new LinearLayout.LayoutParams(-1,dp(52)));
-        TextView title=label("Живая камера\nв другом мире",34,Color.WHITE,Gravity.CENTER);title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);root.addView(title,new LinearLayout.LayoutParams(-1,dp(110)));
-        TextView desc=label("43 live-режима. Matrix уже отдельный анимированный world-движок: цифровая карта сцены, падающий код, motion trails, scanlines и glitch. Остальные сильные режимы тоже разводятся по отдельным визуальным принципам.",16,Color.rgb(188,193,203),Gravity.CENTER);LinearLayout.LayoutParams dl=new LinearLayout.LayoutParams(-1,0,1);dl.setMargins(dp(10),dp(18),dp(10),dp(18));root.addView(desc,dl);
+        TextView title=label("10 живых\nвизуальных миров",34,Color.WHITE,Gravity.CENTER);title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);root.addView(title,new LinearLayout.LayoutParams(-1,dp(110)));
+        TextView desc=label("Только 10 сильных режимов. Каждый построен на другом визуальном принципе — никаких десятков похожих фильтров.",16,Color.rgb(188,193,203),Gravity.CENTER);LinearLayout.LayoutParams dl=new LinearLayout.LayoutParams(-1,0,1);dl.setMargins(dp(10),dp(18),dp(10),dp(18));root.addView(desc,dl);
         Button start=new Button(this);start.setText("ОТКРЫТЬ LIVE-КАМЕРУ");start.setTextSize(16);start.setTypeface(Typeface.DEFAULT,Typeface.BOLD);start.setTextColor(Color.rgb(6,12,16));start.setAllCaps(false);GradientDrawable bg=new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,new int[]{Color.rgb(74,228,239),Color.rgb(207,112,255)});bg.setCornerRadius(dp(20));start.setBackground(bg);start.setOnClickListener(v->requestOrOpenCamera());root.addView(start,new LinearLayout.LayoutParams(-1,dp(64)));
-        TextView foot=label("Matrix • Blue Pen • Crayon • Game Boy • Van Gogh • Manga • Oil • Water • Warhol",11,Color.rgb(111,116,128),Gravity.CENTER);root.addView(foot,new LinearLayout.LayoutParams(-1,dp(52)));
+        TextView foot=label("Matrix • Blue Pen • Crayon • Game Boy • Van Gogh • Manga • Oil Flow • Watercolor • Thermal • ASCII",11,Color.rgb(111,116,128),Gravity.CENTER);root.addView(foot,new LinearLayout.LayoutParams(-1,dp(62)));
         setContentView(root);
     }
 
