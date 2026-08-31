@@ -12,43 +12,22 @@ jobs:
   fetch-pixel-lense:
     if: startsWith(github.head_ref, 'chatgpt/pixel-lense-apk-') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install multi-source APK downloader
+      - name: Download exact Pixel Lense package from APKPure CDN
         shell: bash
         run: |
           set -euxo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install 'git+https://github.com/kiber-io/apkd.git'
-          apkd --help | head -n 50
-
-      - name: Search and download exact package from all sources
-        shell: bash
-        run: |
-          set -u
-          mkdir -p pixel_lense_download
-          cd pixel_lense_download
-          for SRC in apkpure apkcombo rustore rumarket appgallery nashstore; do
-            echo "===== SOURCE: $SRC ====="
-            mkdir -p "$SRC"
-            cd "$SRC"
-            apkd -p com.hiro.pixellense -lv -s "$SRC" || true
-            apkd -p com.hiro.pixellense -d -s "$SRC" || true
-            cd ..
-          done
-          echo '--- downloaded files ---'
-          find . -type f -printf '%p %s bytes\n' | sort
-          COUNT="$(find . -type f \( -name '*.apk' -o -name '*.xapk' -o -name '*.apks' \) | wc -l)"
-          echo "PACKAGE_FILES=$COUNT"
-          test "$COUNT" -gt 0
+          mkdir -p pixel_lense_dist
+          wget --user-agent='Mozilla/5.0' --content-disposition \
+            -O pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk \
+            'https://d.apkpure.com/b/APK/com.hiro.pixellense?version=latest'
+          file pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk
+          stat -c '%n %s bytes' pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk
+          test "$(stat -c%s pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk)" -gt 1000000
 
       - name: Ensure Android verification tools
         shell: bash
@@ -62,67 +41,31 @@ jobs:
             "$SDKMANAGER" 'build-tools;35.0.0' 'platform-tools'
           fi
 
-      - name: Extract and verify exact Pixel Lense package
+      - name: Verify exact package and signature
         shell: bash
         run: |
           set -euxo pipefail
           SDKROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
           AAPT="$(find "$SDKROOT/build-tools" -type f -name aapt -perm -111 | sort -V | tail -n 1)"
           APKSIGNER="$(find "$SDKROOT/build-tools" -type f -name apksigner -perm -111 | sort -V | tail -n 1)"
-          rm -rf pixel_extracted pixel_lense_dist
-          mkdir -p pixel_extracted pixel_lense_dist
+          APK='pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk'
+          BADGING="$($AAPT dump badging "$APK")"
+          echo "$BADGING" | head -n 30
+          echo "$BADGING" | grep -F "package: name='com.hiro.pixellense'"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee pixel_lense_dist/SIGNATURE.txt
+          sha256sum "$APK" | tee pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk.sha256
+          {
+            echo 'SOURCE=APKPure CDN'
+            echo 'EXPECTED_PACKAGE=com.hiro.pixellense'
+            echo "BYTES=$(stat -c%s "$APK")"
+            echo
+            echo "$BADGING" | head -n 25
+          } > pixel_lense_dist/VERIFY.txt
 
-          # Copy raw APKs and unpack XAPK/APKS containers.
-          find pixel_lense_download -type f -name '*.apk' -exec cp -n {} pixel_extracted/ \;
-          while IFS= read -r BUNDLE; do
-            D="pixel_extracted/bundle_$(echo "$BUNDLE" | sha1sum | cut -c1-10)"
-            mkdir -p "$D"
-            unzip -q "$BUNDLE" -d "$D" || true
-          done < <(find pixel_lense_download -type f \( -name '*.xapk' -o -name '*.apks' \))
-
-          : > pixel_lense_dist/VERIFY.txt
-          FOUND=0
-          IDX=0
-          EXPECTED_SIGNER=''
-          BASE=''
-          while IFS= read -r APK; do
-            BADGING="$($AAPT dump badging "$APK" 2>/dev/null || true)"
-            if ! echo "$BADGING" | grep -q "package: name='com.hiro.pixellense'"; then
-              continue
-            fi
-            FOUND=$((FOUND+1))
-            CERT="$($APKSIGNER verify --verbose --print-certs "$APK")"
-            SIGNER="$(echo "$CERT" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
-            test -n "$SIGNER"
-            if [[ -z "$EXPECTED_SIGNER" ]]; then EXPECTED_SIGNER="$SIGNER"; fi
-            test "$SIGNER" = "$EXPECTED_SIGNER"
-            echo "===== $APK =====" >> pixel_lense_dist/VERIFY.txt
-            echo "$BADGING" | head -n 25 >> pixel_lense_dist/VERIFY.txt
-            echo >> pixel_lense_dist/VERIFY.txt
-            echo "$CERT" >> pixel_lense_dist/VERIFY.txt
-            echo >> pixel_lense_dist/VERIFY.txt
-            IDX=$((IDX+1))
-            cp "$APK" "pixel_lense_dist/Pixel_Lense_part_${IDX}.apk"
-            if ! echo "$BADGING" | head -n 1 | grep -q " split='"; then BASE="$APK"; fi
-          done < <(find pixel_extracted -type f -name '*.apk' | sort)
-
-          echo "FOUND_EXACT_APKS=$FOUND" | tee -a pixel_lense_dist/VERIFY.txt
-          echo "SIGNER_SHA256=$EXPECTED_SIGNER" | tee -a pixel_lense_dist/VERIFY.txt
-          test "$FOUND" -gt 0
-          test -n "$BASE"
-          cp "$BASE" pixel_lense_dist/Pixel_Lense_BASE_original.apk
-          sha256sum pixel_lense_dist/*.apk > pixel_lense_dist/SHA256SUMS.txt
-
-          if [[ "$FOUND" -eq 1 ]]; then
-            cp "$BASE" pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk
-          else
-            (cd pixel_lense_dist && zip -q Pixel_Lense_Original_Splits.zip Pixel_Lense_part_*.apk)
-          fi
-
-      - name: Upload verified original package
+      - name: Upload verified Pixel Lense APK
         uses: actions/upload-artifact@v4
         with:
-          name: Pixel_Lense_Camera_into_Art_ORIGINAL
+          name: Pixel_Lense_Camera_into_Art_VERIFIED_APK
           path: pixel_lense_dist/*
           if-no-files-found: error
           retention-days: 7
