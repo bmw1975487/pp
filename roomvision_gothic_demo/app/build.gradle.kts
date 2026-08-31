@@ -8,11 +8,18 @@ android {
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        applicationId = "com.roomvision.gothic"
+        applicationId = "com.roomvision.neural"
         minSdk = 29
         targetSdk = 36
-        versionCode = 11
-        versionName = "1.0.1"
+        versionCode = 20
+        versionName = "2.0.0"
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
+    }
+
+    androidResources {
+        noCompress += "tflite"
     }
 
     buildTypes {
@@ -32,11 +39,18 @@ android {
     }
 
     lint {
-        // Camera permission is explicitly granted before GothicCameraView is created.
-        // Predictive back is explicitly opted out in the manifest for this single-Activity camera app.
-        // Bitmap.compress is invoked from an explicit dedicated Thread; current lint does not infer that lambda hop.
-        disable += setOf("MissingPermission", "GestureBackNavigation", "WrongThread")
+        disable += setOf("MissingPermission", "GestureBackNavigation", "WrongThread", "UnsafeOptInUsageError")
         abortOnError = true
         warningsAsErrors = false
     }
+}
+
+dependencies {
+    implementation("androidx.activity:activity:1.10.1")
+    implementation("androidx.core:core:1.15.0")
+    implementation("androidx.camera:camera-core:1.4.2")
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
 }
