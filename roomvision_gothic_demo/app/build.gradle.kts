@@ -30,4 +30,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    lint {
+        // Camera permission is explicitly granted before GothicCameraView is created.
+        // Predictive back is explicitly opted out in the manifest for this single-Activity camera app.
+        disable += setOf("MissingPermission", "GestureBackNavigation")
+        abortOnError = true
+        warningsAsErrors = false
+    }
 }

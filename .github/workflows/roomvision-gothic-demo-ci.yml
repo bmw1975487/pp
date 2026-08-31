@@ -56,9 +56,16 @@ jobs:
 
       - name: Build and lint
         working-directory: roomvision_gothic_demo
+        shell: bash
         run: |
-          set -euo pipefail
+          set +e
           gradle --no-daemon clean :app:assembleDebug :app:lintDebug --stacktrace
+          RC=$?
+          if [[ "$RC" -ne 0 ]]; then
+            echo "--- LINT TEXT REPORT ---"
+            find app/build -name 'lint-results-debug.txt' -type f -print -exec cat {} \; || true
+          fi
+          exit "$RC"
 
       - name: Verify full APK
         shell: bash
