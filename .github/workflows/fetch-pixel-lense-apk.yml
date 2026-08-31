@@ -17,17 +17,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download exact Pixel Lense package from APKPure CDN
+      - name: Download Pixel Lense from APKPure CDN variants
         shell: bash
         run: |
-          set -euxo pipefail
-          mkdir -p pixel_lense_dist
-          wget --user-agent='Mozilla/5.0' --content-disposition \
-            -O pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk \
+          set -u
+          mkdir -p pixel_lense_download
+          URLS=(
+            'https://d.apkpure.net/b/APK/com.hiro.pixellense?version=latest'
+            'https://d.apkpure.net/b/XAPK/com.hiro.pixellense?version=latest'
             'https://d.apkpure.com/b/APK/com.hiro.pixellense?version=latest'
-          file pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk
-          stat -c '%n %s bytes' pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk
-          test "$(stat -c%s pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk)" -gt 1000000
+            'https://d.apkpure.com/b/XAPK/com.hiro.pixellense?version=latest'
+          )
+          I=0
+          for URL in "${URLS[@]}"; do
+            I=$((I+1))
+            OUT="pixel_lense_download/candidate_${I}"
+            echo "===== $URL ====="
+            curl -fL --retry 2 --connect-timeout 15 --max-time 180 \
+              -A 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 Chrome/131.0 Mobile Safari/537.36' \
+              -e 'https://apkpure.net/' \
+              -H 'Accept: application/vnd.android.package-archive,application/zip,*/*' \
+              -o "$OUT" "$URL" || true
+            if [[ -s "$OUT" ]]; then
+              file "$OUT" || true
+              stat -c '%n %s bytes' "$OUT" || true
+            else
+              rm -f "$OUT"
+            fi
+          done
+          find pixel_lense_download -type f -printf '%p %s bytes\n' | sort
+          test -n "$(find pixel_lense_download -type f -size +1M -print -quit)"
 
       - name: Ensure Android verification tools
         shell: bash
@@ -41,31 +60,63 @@ jobs:
             "$SDKMANAGER" 'build-tools;35.0.0' 'platform-tools'
           fi
 
-      - name: Verify exact package and signature
+      - name: Find exact package and verify signature
         shell: bash
         run: |
           set -euxo pipefail
           SDKROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
           AAPT="$(find "$SDKROOT/build-tools" -type f -name aapt -perm -111 | sort -V | tail -n 1)"
           APKSIGNER="$(find "$SDKROOT/build-tools" -type f -name apksigner -perm -111 | sort -V | tail -n 1)"
-          APK='pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk'
-          BADGING="$($AAPT dump badging "$APK")"
-          echo "$BADGING" | head -n 30
-          echo "$BADGING" | grep -F "package: name='com.hiro.pixellense'"
-          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee pixel_lense_dist/SIGNATURE.txt
-          sha256sum "$APK" | tee pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk.sha256
-          {
-            echo 'SOURCE=APKPure CDN'
-            echo 'EXPECTED_PACKAGE=com.hiro.pixellense'
-            echo "BYTES=$(stat -c%s "$APK")"
-            echo
-            echo "$BADGING" | head -n 25
-          } > pixel_lense_dist/VERIFY.txt
+          rm -rf inspect pixel_lense_dist
+          mkdir -p inspect pixel_lense_dist
+          : > pixel_lense_dist/VERIFY.txt
+          FOUND=0
+          IDX=0
+          BASE=''
+          SIGNER=''
 
-      - name: Upload verified Pixel Lense APK
+          while IFS= read -r F; do
+            if unzip -t "$F" >/dev/null 2>&1; then
+              D="inspect/$(basename "$F")"
+              mkdir -p "$D"
+              unzip -q "$F" -d "$D" || true
+            fi
+            cp "$F" "inspect/$(basename "$F").apk" || true
+          done < <(find pixel_lense_download -type f -size +1M | sort)
+
+          while IFS= read -r APK; do
+            BADGING="$($AAPT dump badging "$APK" 2>/dev/null || true)"
+            if ! echo "$BADGING" | grep -q "package: name='com.hiro.pixellense'"; then continue; fi
+            FOUND=$((FOUND+1))
+            IDX=$((IDX+1))
+            CERT="$($APKSIGNER verify --verbose --print-certs "$APK")"
+            THIS_SIGNER="$(echo "$CERT" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
+            test -n "$THIS_SIGNER"
+            if [[ -z "$SIGNER" ]]; then SIGNER="$THIS_SIGNER"; fi
+            test "$SIGNER" = "$THIS_SIGNER"
+            echo "===== $APK =====" >> pixel_lense_dist/VERIFY.txt
+            echo "$BADGING" | head -n 25 >> pixel_lense_dist/VERIFY.txt
+            echo "$CERT" >> pixel_lense_dist/VERIFY.txt
+            cp "$APK" "pixel_lense_dist/Pixel_Lense_part_${IDX}.apk"
+            if ! echo "$BADGING" | head -n 1 | grep -q " split='"; then BASE="$APK"; fi
+          done < <(find inspect -type f -name '*.apk' | sort)
+
+          echo "FOUND=$FOUND" | tee -a pixel_lense_dist/VERIFY.txt
+          echo "SIGNER_SHA256=$SIGNER" | tee -a pixel_lense_dist/VERIFY.txt
+          test "$FOUND" -gt 0
+          test -n "$BASE"
+          cp "$BASE" pixel_lense_dist/Pixel_Lense_BASE_original.apk
+          if [[ "$FOUND" -eq 1 ]]; then
+            cp "$BASE" pixel_lense_dist/Pixel_Lense_Camera_into_Art.apk
+          else
+            (cd pixel_lense_dist && zip -q Pixel_Lense_Original_Splits.zip Pixel_Lense_part_*.apk)
+          fi
+          sha256sum pixel_lense_dist/*.apk > pixel_lense_dist/SHA256SUMS.txt
+
+      - name: Upload verified Pixel Lense package
         uses: actions/upload-artifact@v4
         with:
-          name: Pixel_Lense_Camera_into_Art_VERIFIED_APK
+          name: Pixel_Lense_Camera_into_Art_VERIFIED
           path: pixel_lense_dist/*
           if-no-files-found: error
           retention-days: 7
