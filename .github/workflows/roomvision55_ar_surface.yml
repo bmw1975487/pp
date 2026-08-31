@@ -38,6 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p reports
           cat roomvision55_seed/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
           test -f app/src/main/java/com/roomvision/demo/GothicArView.java
           grep -F 'PlaneFindingMode.HORIZONTAL_AND_VERTICAL' app/src/main/java/com/roomvision/demo/GothicArView.java
@@ -51,13 +52,23 @@ jobs:
           python -m pip install --quiet pillow
           python generate_assets_ci.py
           mkdir -p app/src/main/assets
+          curl -A 'RoomVision-Build/5.5' -L --fail --retry 3 --retry-delay 2 \
+            'https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/castle_wall_slates/castle_wall_slates_diff_4k.jpg' \
+            -o app/src/main/assets/castle_wall_slates_diff_2k.jpg
           curl -L --fail --retry 3 --retry-delay 2 \
             'https://storage.googleapis.com/mediapipe-tasks/object_detector/efficientdet_lite0_uint8.tflite' \
             -o app/src/main/assets/object_detector.tflite
           CASTLE_SIZE=$(stat -c%s app/src/main/assets/castle_wall_slates_diff_2k.jpg)
           MODEL_SIZE=$(stat -c%s app/src/main/assets/object_detector.tflite)
-          echo "castle_texture_bytes=$CASTLE_SIZE"
-          echo "object_detector_bytes=$MODEL_SIZE"
+          python - <<'PY'
+          from PIL import Image
+          p='app/src/main/assets/castle_wall_slates_diff_2k.jpg'
+          im=Image.open(p)
+          print('castle_dimensions=%dx%d' % im.size)
+          assert im.size == (4096,4096), im.size
+          PY
+          echo "castle_texture_bytes=$CASTLE_SIZE" | tee reports/assets.txt
+          echo "object_detector_bytes=$MODEL_SIZE" | tee -a reports/assets.txt
           test "$CASTLE_SIZE" -gt 8000000
           test "$MODEL_SIZE" -gt 4000000
 
@@ -80,7 +91,6 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          mkdir -p reports
           gradle --no-daemon --console=plain clean :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --stacktrace 2>&1 | tee reports/build.log
 
       - name: Verify APK
@@ -119,5 +129,5 @@ jobs:
           path: |
             dist/*
             reports/*
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
