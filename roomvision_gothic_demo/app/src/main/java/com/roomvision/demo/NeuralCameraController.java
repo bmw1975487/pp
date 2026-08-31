@@ -4,7 +4,9 @@ import android.content.ContentValues;
 import android.graphics.Bitmap;
 import android.graphics.Matrix;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Environment;
+import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.util.Size;
@@ -31,19 +33,26 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class NeuralCameraController {
-    private static final String TAG = "RoomVision4Modes";
+    private static final String TAG = "RoomVisionModern";
     private final ComponentActivity activity;
     private final ImageView outputView;
     private final TextView statusView;
     private final TextView modeView;
     private final ExecutorService analysisExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean processing = new AtomicBoolean(false);
+
     private ProcessCameraProvider cameraProvider;
     private OpenCvFilterEngine artEngine;
     private MatrixEffectEngine matrixEngine;
+    private ModernEngineStack modernStack;
+    private AgslGothicRenderer gothicGpu;
+    private QuestObjectDetector questVision;
+
     private volatile FilterType currentFilter = FilterType.MATRIX;
     private volatile Bitmap lastStyled;
     private volatile boolean stopped;
+    private volatile String lastVisionHit;
+    private volatile long lastVisionHitUntil;
     private int renderedFrames;
     private long fpsWindowStart = System.currentTimeMillis();
     private int shownFps;
@@ -57,11 +66,27 @@ final class NeuralCameraController {
 
     void start() {
         stopped = false;
-        setStatus("ЗАГРУЗКА 4 РЕЖИМОВ…");
+        setStatus("ЗАГРУЗКА MODERN ENGINE STACK…");
         analysisExecutor.execute(() -> {
             matrixEngine = new MatrixEffectEngine();
             artEngine = new OpenCvFilterEngine();
-            if (!stopped) activity.runOnUiThread(this::bindCamera);
+
+            modernStack = new ModernEngineStack();
+            modernStack.initialize();
+            if (Build.VERSION.SDK_INT >= 33 && modernStack.isAgslAvailable()) {
+                try { gothicGpu = new AgslGothicRenderer(); }
+                catch (Throwable t) { Log.w(TAG, "AGSL Gothic unavailable", t); gothicGpu = null; }
+            }
+
+            questVision = new QuestObjectDetector();
+            questVision.initialize(activity);
+
+            if (stopped) return;
+            String stack = modernStack.describe();
+            activity.runOnUiThread(() -> {
+                statusView.setText(stack);
+                bindCamera();
+            });
         });
     }
 
@@ -85,7 +110,7 @@ final class NeuralCameraController {
                 analysis.setAnalyzer(analysisExecutor, this::analyzeFrame);
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(activity, CameraSelector.DEFAULT_BACK_CAMERA, analysis);
-                setStatus("LIVE • " + currentFilter.label);
+                setStatus("LIVE • " + currentFilter.label + " • VISION: FLOWER/PLANT");
             } catch (Throwable e) {
                 Log.e(TAG, "Camera bind failed", e);
                 setStatus("ОШИБКА КАМЕРЫ");
@@ -96,36 +121,69 @@ final class NeuralCameraController {
     private void analyzeFrame(ImageProxy image) {
         if (stopped || !processing.compareAndSet(false, true)) { image.close(); return; }
         Bitmap raw = null;
-        try { raw = imageProxyToBitmap(image); }
-        catch (Throwable e) { Log.e(TAG, "Frame conversion failed", e); }
-        finally { image.close(); }
-        if (raw == null) { processing.set(false); return; }
-
-        long started = System.nanoTime();
-        FilterType requested = currentFilter;
-        Bitmap styled;
         try {
-            styled = requested == FilterType.MATRIX ? matrixEngine.process(raw) : artEngine.process(raw, requested);
-        } catch (Throwable e) {
-            Log.e(TAG, "Mode failed: " + requested, e);
-            styled = raw.copy(Bitmap.Config.ARGB_8888, false);
+            try { raw = imageProxyToBitmap(image); }
+            catch (Throwable e) { Log.e(TAG, "Frame conversion failed", e); }
+            finally { image.close(); }
+            if (raw == null) return;
+
+            // Quest vision runs sparsely on the same live frame and beeps when a plant/flower target appears.
+            if (questVision != null && questVision.isReady()) {
+                String hit = questVision.inspect(raw);
+                if (hit != null) {
+                    lastVisionHit = hit;
+                    lastVisionHitUntil = SystemClock.elapsedRealtime() + 2600L;
+                }
+            }
+
+            long started = System.nanoTime();
+            FilterType requested = currentFilter;
+            Bitmap styled;
+            String engineName;
+            try {
+                if (requested == FilterType.MATRIX) {
+                    styled = matrixEngine.process(raw);
+                    engineName = "MATRIX WORLD";
+                } else if (requested == FilterType.GOTHIC && gothicGpu != null && Build.VERSION.SDK_INT >= 33) {
+                    styled = gothicGpu.render(raw, SystemClock.uptimeMillis());
+                    engineName = "GOTHIC AGSL GPU";
+                } else {
+                    styled = artEngine.process(raw, requested);
+                    engineName = requested == FilterType.GOTHIC ? "GOTHIC CPU" : "LIVE ART";
+                }
+            } catch (Throwable e) {
+                Log.e(TAG, "Mode failed: " + requested, e);
+                styled = raw.copy(Bitmap.Config.ARGB_8888, false);
+                engineName = "SAFE CAMERA";
+            }
+
+            long ms = Math.max(1, (System.nanoTime() - started) / 1_000_000L);
+            updateFps();
+            Bitmap ready = styled;
+            String finalEngineName = engineName;
+            if (!stopped) activity.runOnUiThread(() -> {
+                if (stopped) { if (ready != null && !ready.isRecycled()) ready.recycle(); return; }
+                Bitmap prev = lastStyled;
+                lastStyled = ready;
+                outputView.setImageBitmap(ready);
+
+                StringBuilder s = new StringBuilder();
+                s.append(finalEngineName).append(" • ").append(requested.label)
+                        .append(" • ").append(shownFps).append(" FPS • ").append(ms).append(" ms");
+                if (modernStack != null && modernStack.isFilamentAvailable()) {
+                    s.append(" • FILAMENT/").append(modernStack.filamentBackend());
+                }
+                if (questVision != null && questVision.isReady()) s.append(" • VISION");
+                if (lastVisionHit != null && SystemClock.elapsedRealtime() < lastVisionHitUntil) {
+                    s.append(" • TARGET: ").append(lastVisionHit);
+                }
+                statusView.setText(s.toString());
+                if (prev != null && prev != ready && !prev.isRecycled()) prev.recycle();
+            }); else if (ready != null && !ready.isRecycled()) ready.recycle();
+        } finally {
+            if (raw != null && !raw.isRecycled()) raw.recycle();
+            processing.set(false);
         }
-
-        long ms = Math.max(1, (System.nanoTime() - started) / 1_000_000L);
-        updateFps();
-        Bitmap ready = styled;
-        if (!stopped) activity.runOnUiThread(() -> {
-            if (stopped) { if (ready != null && !ready.isRecycled()) ready.recycle(); return; }
-            Bitmap prev = lastStyled;
-            lastStyled = ready;
-            outputView.setImageBitmap(ready);
-            String engine = requested == FilterType.MATRIX ? "WORLD FX" : "LIVE ART";
-            statusView.setText(String.format(Locale.US, "%s • %s • %d FPS • %d ms", engine, requested.label, shownFps, ms));
-            if (prev != null && prev != ready && !prev.isRecycled()) prev.recycle();
-        }); else if (ready != null && !ready.isRecycled()) ready.recycle();
-
-        if (!raw.isRecycled()) raw.recycle();
-        processing.set(false);
     }
 
     private void updateFps() {
@@ -201,7 +259,12 @@ final class NeuralCameraController {
         cameraProvider = null;
         Bitmap f = lastStyled; lastStyled = null;
         if (f != null && !f.isRecycled()) f.recycle();
-        matrixEngine = null; artEngine = null;
+
+        QuestObjectDetector q = questVision; questVision = null;
+        if (q != null) try { q.close(); } catch (Throwable ignored) { }
+        ModernEngineStack m = modernStack; modernStack = null;
+        if (m != null) try { m.close(); } catch (Throwable ignored) { }
+        gothicGpu = null; matrixEngine = null; artEngine = null;
         analysisExecutor.shutdown();
     }
 
