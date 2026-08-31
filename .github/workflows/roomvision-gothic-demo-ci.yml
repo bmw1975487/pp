@@ -1,4 +1,4 @@
-name: Room Vision Live 3.0 APK
+name: Room Vision Live 4.0 APK
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-roomvision:
-    if: startsWith(github.head_ref, 'chatgpt/roomvision-neural-') || startsWith(github.head_ref, 'chatgpt/roomvision-gothic-') || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.head_ref, 'chatgpt/roomvision-neural-') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -23,16 +23,25 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Generate project neural style references
+      - name: Generate project assets
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install --disable-pip-version-check pillow
           python3 roomvision_gothic_demo/generate_assets.py
-          test -s roomvision_gothic_demo/app/src/main/assets/styles/van_gogh.jpg
-          test -s roomvision_gothic_demo/app/src/main/assets/styles/kandinsky.jpg
-          test -s roomvision_gothic_demo/app/src/main/assets/styles/cyberpunk.jpg
           test -s roomvision_gothic_demo/app/src/main/res/drawable/icon.png
+
+      - name: Install public-domain neural style references
+        shell: bash
+        run: |
+          set -euo pipefail
+          STYLES='roomvision_gothic_demo/app/src/main/assets/styles'
+          mkdir -p "$STYLES"
+          curl -fL --retry 4 --retry-delay 2 'https://upload.wikimedia.org/wikipedia/commons/b/ba/TheStarryNightByVincentVanGogh.jpg' -o "$STYLES/van_gogh.jpg"
+          curl -fL --retry 4 --retry-delay 2 'https://upload.wikimedia.org/wikipedia/commons/b/b4/Vassily_Kandinsky%2C_1913_-_Composition_7.jpg' -o "$STYLES/kandinsky.jpg"
+          test "$(stat -c%s "$STYLES/van_gogh.jpg")" -gt 200000
+          test "$(stat -c%s "$STYLES/kandinsky.jpg")" -gt 150000
+          file "$STYLES/van_gogh.jpg" "$STYLES/kandinsky.jpg"
 
       - name: Download official TensorFlow arbitrary style models
         shell: bash
@@ -71,7 +80,7 @@ jobs:
           if [[ "$RC" -ne 0 ]]; then find app/build -name 'lint-results-debug.txt' -type f -print -exec cat {} \; || true; fi
           exit "$RC"
 
-      - name: Verify all-filter APK
+      - name: Verify faithful-filter APK
         shell: bash
         run: |
           set -euo pipefail
@@ -83,13 +92,15 @@ jobs:
           BADGING="$($SDKROOT/build-tools/35.0.0/aapt dump badging "$APK")"
           echo "$BADGING" | head -n 20
           echo "$BADGING" | grep -F "package: name='com.roomvision.filters.debug'"
+          echo "$BADGING" | grep -F "versionName='4.0.0'"
           unzip -l "$APK" | grep -F 'assets/style_predict.tflite'
           unzip -l "$APK" | grep -F 'assets/style_transform.tflite'
           unzip -l "$APK" | grep -F 'assets/styles/van_gogh.jpg'
+          unzip -l "$APK" | grep -F 'assets/styles/kandinsky.jpg'
           unzip -l "$APK" | grep -F 'lib/arm64-v8a/libopencv_java4.so'
           mkdir -p roomvision_dist
-          cp "$APK" roomvision_dist/RoomVision_Live_Filters_3.0.0.apk
-          sha256sum roomvision_dist/RoomVision_Live_Filters_3.0.0.apk > roomvision_dist/RoomVision_Live_Filters_3.0.0.apk.sha256
+          cp "$APK" roomvision_dist/RoomVision_Live_Filters_4.0.0.apk
+          sha256sum roomvision_dist/RoomVision_Live_Filters_4.0.0.apk > roomvision_dist/RoomVision_Live_Filters_4.0.0.apk.sha256
 
       - name: Package complete source
         shell: bash
@@ -97,13 +108,13 @@ jobs:
           set -euo pipefail
           rm -rf roomvision_gothic_demo/.gradle roomvision_gothic_demo/app/build roomvision_gothic_demo/build
           cd roomvision_gothic_demo
-          zip -qr ../roomvision_dist/RoomVision_Live_Filters_3.0.0_Source.zip . -x '*.DS_Store'
+          zip -qr ../roomvision_dist/RoomVision_Live_Filters_4.0.0_Source.zip . -x '*.DS_Store'
           cd ..
 
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: RoomVision_Live_Filters_3.0.0_FULL
+          name: RoomVision_Live_Filters_4.0.0_FULL
           path: roomvision_dist/*
           if-no-files-found: error
           retention-days: 7
