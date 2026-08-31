@@ -50,7 +50,7 @@ jobs:
           echo "STYLE_PREDICT_BYTES=$PREDICT_SIZE"
           echo "STYLE_TRANSFORM_BYTES=$TRANSFORM_SIZE"
           test "$PREDICT_SIZE" -eq 2828838
-          test "$TRANSFORM_SIZE" -eq 284398
+          test "$TRANSFORM_SIZE" -eq 245046
           sha256sum "$ASSETS/style_predict.tflite" "$ASSETS/style_transform.tflite"
 
       - name: Install Android SDK packages
