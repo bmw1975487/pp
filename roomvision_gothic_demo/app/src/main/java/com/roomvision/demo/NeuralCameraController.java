@@ -33,7 +33,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class NeuralCameraController {
-    private static final String TAG = "RoomVisionModern";
+    private static final String TAG = "RoomVisionGothic52";
     private final ComponentActivity activity;
     private final ImageView outputView;
     private final TextView statusView;
@@ -48,7 +48,7 @@ final class NeuralCameraController {
     private AgslGothicRenderer gothicGpu;
     private QuestObjectDetector questVision;
 
-    private volatile FilterType currentFilter = FilterType.MATRIX;
+    private volatile FilterType currentFilter = FilterType.GOTHIC;
     private volatile Bitmap lastStyled;
     private volatile boolean stopped;
     private volatile String lastVisionHit;
@@ -66,7 +66,7 @@ final class NeuralCameraController {
 
     void start() {
         stopped = false;
-        setStatus("ЗАГРУЗКА MODERN ENGINE STACK…");
+        setStatus("ЗАГРУЗКА GOTHIC WORLD + MODERN STACK…");
         analysisExecutor.execute(() -> {
             matrixEngine = new MatrixEffectEngine();
             artEngine = new OpenCvFilterEngine();
@@ -84,20 +84,20 @@ final class NeuralCameraController {
             if (stopped) return;
             String stack = modernStack.describe();
             activity.runOnUiThread(() -> {
-                statusView.setText(stack);
+                statusView.setText("GOTHIC READY • " + stack);
                 bindCamera();
             });
         });
     }
 
     void setFilter(FilterType type) {
-        currentFilter = type == null ? FilterType.MATRIX : type;
+        currentFilter = type == null ? FilterType.GOTHIC : type;
         activity.runOnUiThread(() -> modeView.setText(currentFilter.label.toUpperCase(Locale.ROOT)));
     }
 
     private void bindCamera() {
         if (stopped) return;
-        setStatus("ЗАПУСК КАМЕРЫ…");
+        setStatus("ЗАПУСК GOTHIC LIVE CAMERA…");
         ListenableFuture<ProcessCameraProvider> future = ProcessCameraProvider.getInstance(activity);
         future.addListener(() -> {
             try {
@@ -110,7 +110,7 @@ final class NeuralCameraController {
                 analysis.setAnalyzer(analysisExecutor, this::analyzeFrame);
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(activity, CameraSelector.DEFAULT_BACK_CAMERA, analysis);
-                setStatus("LIVE • " + currentFilter.label + " • VISION: FLOWER/PLANT");
+                setStatus("LIVE • GOTHIC / DRACULA • VISION: FLOWER/PLANT");
             } catch (Throwable e) {
                 Log.e(TAG, "Camera bind failed", e);
                 setStatus("ОШИБКА КАМЕРЫ");
@@ -127,7 +127,6 @@ final class NeuralCameraController {
             finally { image.close(); }
             if (raw == null) return;
 
-            // Quest vision runs sparsely on the same live frame and beeps when a plant/flower target appears.
             if (questVision != null && questVision.isReady()) {
                 String hit = questVision.inspect(raw);
                 if (hit != null) {
@@ -141,15 +140,18 @@ final class NeuralCameraController {
             Bitmap styled;
             String engineName;
             try {
-                if (requested == FilterType.MATRIX) {
+                if (requested == FilterType.GOTHIC && gothicGpu != null && Build.VERSION.SDK_INT >= 33) {
+                    styled = gothicGpu.render(raw, SystemClock.uptimeMillis());
+                    engineName = "GOTHIC DRACULA • AGSL GPU";
+                } else if (requested == FilterType.GOTHIC) {
+                    styled = artEngine.process(raw, requested);
+                    engineName = "GOTHIC DRACULA • CPU FALLBACK";
+                } else if (requested == FilterType.MATRIX) {
                     styled = matrixEngine.process(raw);
                     engineName = "MATRIX WORLD";
-                } else if (requested == FilterType.GOTHIC && gothicGpu != null && Build.VERSION.SDK_INT >= 33) {
-                    styled = gothicGpu.render(raw, SystemClock.uptimeMillis());
-                    engineName = "GOTHIC AGSL GPU";
                 } else {
                     styled = artEngine.process(raw, requested);
-                    engineName = requested == FilterType.GOTHIC ? "GOTHIC CPU" : "LIVE ART";
+                    engineName = "LIVE ART";
                 }
             } catch (Throwable e) {
                 Log.e(TAG, "Mode failed: " + requested, e);
