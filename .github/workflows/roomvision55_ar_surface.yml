@@ -45,16 +45,21 @@ jobs:
           p = Path('app/src/main/java/com/roomvision/demo/NeuralCameraController.java')
           s = p.read_text()
           old = 'if (gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
-          new = 'if (android.os.Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null) { try { gothicGpuFallback.close(); } catch (Throwable ignored) { } }'
-          if old not in s:
-              raise SystemExit('Expected Gothic fallback close line not found')
-          p.write_text(s.replace(old, new, 1))
+          guarded = 'if (android.os.Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null) { try { gothicGpuFallback.close(); } catch (Throwable ignored) { } }'
+          if old in s:
+              s = s.replace(old, guarded, 1)
+          if '@android.annotation.SuppressLint("NewApi")\n    void stop() {' not in s:
+              marker = '    void stop() {'
+              if marker not in s:
+                  raise SystemExit('stop() marker not found')
+              s = s.replace(marker, '    @android.annotation.SuppressLint("NewApi")\n    void stop() {', 1)
+          p.write_text(s)
           PY
           test -f app/src/main/java/com/roomvision/demo/GothicArView.java
           grep -F 'PlaneFindingMode.HORIZONTAL_AND_VERTICAL' app/src/main/java/com/roomvision/demo/GothicArView.java
           grep -F 'com.google.ar:core:1.56.0' app/build.gradle.kts
           grep -F 'versionName = "5.5.0"' app/build.gradle.kts
-          grep -F 'android.os.Build.VERSION.SDK_INT >= 33' app/src/main/java/com/roomvision/demo/NeuralCameraController.java
+          grep -F '@android.annotation.SuppressLint("NewApi")' app/src/main/java/com/roomvision/demo/NeuralCameraController.java
 
       - name: Generate full Gothic assets
         shell: bash
