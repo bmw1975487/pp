@@ -5,12 +5,10 @@ import java.util.List;
 
 public enum FilterType {
     ORIGINAL("Original", false),
-
-    // Dedicated world/effect engines. These must look fundamentally different,
-    // not like recolored variants of the same OpenCV pipeline.
     MATRIX("Matrix", false),
 
-    // Pixel Lense family
+    // Internal engines kept for implementation/fallback, but only the ten
+    // production modes returned by catalog() are exposed in the app.
     PIXEL_COMIC("Comic Book", false),
     PIXEL_COMIC_BW("Comic B&W", false),
     PIXEL_ART("Pixel", false),
@@ -25,11 +23,7 @@ public enum FilterType {
     PIXEL_ASCII("ASCII Art", false),
     VAN_GOGH("Van Gogh", true),
     KANDINSKY("Kandinsky", true),
-
-    // Cartoon Camera HD family
     CARTOON_HD("Cartoon HD", false),
-
-    // Sketch Camera family
     BLUE_PEN("Blue Pen", false),
     PEN("Pen", false),
     PENCIL("Pencil", false),
@@ -65,7 +59,19 @@ public enum FilterType {
         this.neural = neural;
     }
 
+    /** Exactly ten production modes. No filler, no near-duplicates. */
     public static List<FilterType> catalog() {
-        return Arrays.asList(values());
+        return Arrays.asList(
+                MATRIX,
+                BLUE_PEN,
+                CRAYON,
+                GAME_BOY,
+                VAN_GOGH,
+                MANGA,
+                OIL_FLOW,
+                PIXEL_WATERCOLOR,
+                PIXEL_THERMAL,
+                PIXEL_ASCII
+        );
     }
 }
