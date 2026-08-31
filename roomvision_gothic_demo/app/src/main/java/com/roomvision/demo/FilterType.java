@@ -6,6 +6,10 @@ import java.util.List;
 public enum FilterType {
     ORIGINAL("Original", false),
 
+    // Dedicated world/effect engines. These must look fundamentally different,
+    // not like recolored variants of the same OpenCV pipeline.
+    MATRIX("Matrix", false),
+
     // Pixel Lense family
     PIXEL_COMIC("Comic Book", false),
     PIXEL_COMIC_BW("Comic B&W", false),
