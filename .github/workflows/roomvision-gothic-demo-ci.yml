@@ -1,4 +1,4 @@
-name: RoomVision Gothic Diagnostic APK
+name: RoomVision Gothic 5.3.1 Fixed APK
 
 on:
   pull_request:
@@ -12,10 +12,22 @@ jobs:
   build-roomvision:
     if: startsWith(github.head_ref, 'chatgpt/roomvision-gothic-') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Reconstruct fixed 5.3.1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf roomvision_gothic_demo
+          mkdir -p roomvision_gothic_demo
+          cat rv531/payload_part_*.b64 | base64 -d | tar -xz -C roomvision_gothic_demo
+          test -f roomvision_gothic_demo/app/src/main/java/com/roomvision/modern/NeuralCameraController.java
+          grep -F 'versionName = "5.3.1"' roomvision_gothic_demo/app/build.gradle.kts
+          grep -F 'questVision = null;' roomvision_gothic_demo/app/src/main/java/com/roomvision/modern/NeuralCameraController.java
+          ! grep -F 'Thread.sleep(2200L)' roomvision_gothic_demo/app/src/main/java/com/roomvision/modern/NeuralCameraController.java
 
       - name: JDK 17
         uses: actions/setup-java@v4
@@ -23,17 +35,25 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Python material generator
+      - name: Generate assets and Gothic stone material
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m pip install --disable-pip-version-check pillow
+          python3 -m pip install --disable-pip-version-check --quiet pillow
           python3 roomvision_gothic_demo/generate_assets.py
-          echo "--- generated world pack ---"
-          du -ah roomvision_gothic_demo/app/src/main/assets/worlds/gothic_castle | sort -h
-          test -s roomvision_gothic_demo/app/src/main/assets/worlds/gothic_castle/stone_albedo.jpg
-          test -s roomvision_gothic_demo/app/src/main/assets/worlds/gothic_castle/cracks.png
-          test -s roomvision_gothic_demo/app/src/main/assets/worlds/gothic_castle/gothic_hero.jpg
+          mkdir -p roomvision_gothic_demo/app/src/main/assets
+          curl -fL --retry 4 --retry-delay 2 \
+            'https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/castle_wall_slates/castle_wall_slates_diff_1k.png' \
+            -o /tmp/castle_wall_slates.png
+          python3 - <<'PY'
+          from PIL import Image
+          src='/tmp/castle_wall_slates.png'
+          dst='roomvision_gothic_demo/app/src/main/assets/castle_wall_slates_diff_2k.jpg'
+          im=Image.open(src).convert('RGB')
+          im.save(dst, 'JPEG', quality=95, subsampling=0)
+          print(dst, im.size)
+          PY
+          test -s roomvision_gothic_demo/app/src/main/assets/castle_wall_slates_diff_2k.jpg
           test -s roomvision_gothic_demo/app/src/main/res/drawable/icon.png
 
       - name: Install Android SDK packages
@@ -54,37 +74,32 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Build and lint
+      - name: Clean build and lint
         working-directory: roomvision_gothic_demo
         shell: bash
         run: |
-          set +e
+          set -euo pipefail
           gradle --no-daemon clean :app:assembleDebug :app:lintDebug --stacktrace
-          RC=$?
-          if [[ "$RC" -ne 0 ]]; then
-            echo "--- LINT TEXT REPORT ---"
-            find app/build -name 'lint-results-debug.txt' -type f -print -exec cat {} \; || true
-          fi
-          exit "$RC"
 
-      - name: Verify diagnostic APK
+      - name: Verify fixed APK
         shell: bash
         run: |
           set -euo pipefail
-          APK="roomvision_gothic_demo/app/build/outputs/apk/debug/app-debug.apk"
+          APK='roomvision_gothic_demo/app/build/outputs/apk/debug/app-debug.apk'
           test -s "$APK"
-          SIZE=$(stat -c%s "$APK")
-          echo "APK_BYTES=$SIZE"
-          if [[ "$SIZE" -lt 2000000 ]]; then
-            echo "ERROR: APK is too small; material World Pack was not packaged."
-            exit 31
-          fi
           SDKROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
           "$SDKROOT/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
-          "$SDKROOT/build-tools/35.0.0/aapt" dump badging "$APK" | head -n 20
+          "$SDKROOT/build-tools/35.0.0/aapt" dump badging "$APK" | tee /tmp/aapt_badging.txt
+          grep -F "versionName='5.3.1'" /tmp/aapt_badging.txt
+          unzip -l "$APK" | tee /tmp/apk_files.txt
+          grep -F 'lib/arm64-v8a/libCGE.so' /tmp/apk_files.txt
+          grep -F 'lib/arm64-v8a/libCGEExt.so' /tmp/apk_files.txt
+          grep -F 'lib/arm64-v8a/liblitert_jni.so' /tmp/apk_files.txt
+          grep -F 'lib/arm64-v8a/libmediapipe_tasks_jni.so' /tmp/apk_files.txt
+          grep -F 'assets/castle_wall_slates_diff_2k.jpg' /tmp/apk_files.txt
           mkdir -p roomvision_dist
-          cp "$APK" roomvision_dist/RoomVision_Gothic_1.0.1_DIAGNOSTIC.apk
-          sha256sum roomvision_dist/RoomVision_Gothic_1.0.1_DIAGNOSTIC.apk > roomvision_dist/RoomVision_Gothic_1.0.1_DIAGNOSTIC.apk.sha256
+          cp "$APK" roomvision_dist/RoomVision_Gothic_5.3.1_FIXED.apk
+          sha256sum roomvision_dist/RoomVision_Gothic_5.3.1_FIXED.apk > roomvision_dist/RoomVision_Gothic_5.3.1_FIXED.apk.sha256
 
       - name: Package complete source
         shell: bash
@@ -92,14 +107,14 @@ jobs:
           set -euo pipefail
           rm -rf roomvision_gothic_demo/.gradle roomvision_gothic_demo/app/build roomvision_gothic_demo/build
           cd roomvision_gothic_demo
-          zip -qr ../roomvision_dist/RoomVision_Gothic_1.0.1_DIAGNOSTIC_Source.zip . -x '*.DS_Store'
+          zip -qr ../roomvision_dist/RoomVision_Gothic_5.3.1_FIXED_Source.zip . -x '*.DS_Store'
           cd ..
-          test -s roomvision_dist/RoomVision_Gothic_1.0.1_DIAGNOSTIC_Source.zip
+          test -s roomvision_dist/RoomVision_Gothic_5.3.1_FIXED_Source.zip
 
-      - name: Upload diagnostic build
+      - name: Upload fixed build
         uses: actions/upload-artifact@v4
         with:
-          name: RoomVision_Gothic_1.0.1_DIAGNOSTIC_FULL
+          name: RoomVision_Gothic_5.3.1_FIXED_FULL
           path: roomvision_dist/*
           if-no-files-found: error
           retention-days: 7
