@@ -1,0 +1,145 @@
+name: RoomVision 5.10 Gothic Surface Blend APK
+
+on:
+  push:
+    paths:
+      - '.github/workflows/roomvision510_surface_blend.yml'
+      - 'roomvision510_override_parts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: roomvision510-surface-blend
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore 5.9 and apply 5.10 surface-blend override
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          cat roomvision55_seed/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision59_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision510_override_parts/part_* | tr -d '\n\r ' | base64 -d | tar -xz
+
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/roomvision/demo/NeuralCameraController.java')
+          s = p.read_text(encoding='utf-8')
+          old = 'if (gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
+          new = 'if (android.os.Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
+          if old in s:
+              s = s.replace(old, new)
+          elif new not in s:
+              raise SystemExit('Expected legacy AGSL close line not found')
+          p.write_text(s, encoding='utf-8')
+          PY
+
+          G=app/src/main/java/com/roomvision/demo/GothicArView.java
+          grep -F 'versionCode = 60' app/build.gradle.kts
+          grep -F 'versionName = "5.10.0"' app/build.gradle.kts
+          grep -F 'Room Vision Gothic 5.10' app/src/main/res/values/strings.xml
+          grep -F 'Config.DepthMode.AUTOMATIC' "$G"
+          grep -F 'frame.acquireDepthImage16Bits()' "$G"
+          grep -F 'cameraPose.transformPoint' "$G"
+          grep -F 'private static final int GRID_COLS = 96;' "$G"
+          grep -F 'private static final int GRID_ROWS = 72;' "$G"
+          grep -F 'float materialAlpha=mix(0.56,0.64,1.0-horizontal);' "$G"
+          grep -F 'GLES20.glEnable(GLES20.GL_BLEND);' "$G"
+          grep -F 'GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);' "$G"
+          grep -F 'GOTHIC SURFACE BLEND' "$G"
+          grep -F 'texture2D(uStone,p.yz*s)' "$G"
+          grep -F 'texture2D(uStone,p.xz*s)' "$G"
+          grep -F 'texture2D(uStone,p.xy*s)' "$G"
+          if grep -q 'import com.google.ar.core.Plane;' "$G"; then echo 'ERROR: planes returned'; exit 11; fi
+          if grep -q 'getPolygon()' "$G"; then echo 'ERROR: plane polygons returned'; exit 12; fi
+          if grep -q 'pyrMeanShiftFiltering\|Imgproc.Canny\|SurfaceGothicEngine' "$G"; then echo 'ERROR: cartoon path returned'; exit 13; fi
+
+      - name: Generate assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet pillow
+          python generate_assets_ci.py | tee reports/assets.txt
+          test -s app/src/main/assets/castle_wall_slates_diff_2k.jpg
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK 36 / Build Tools 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'platform-tools'
+
+      - name: Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Clean lint test assemble
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon --console=plain clean :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --stacktrace 2>&1 | tee reports/build.log
+
+      - name: Verify 5.10 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          test -s "$APK"
+          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee reports/apksigner.txt
+          "$BT/aapt2" dump badging "$APK" | tee reports/aapt2-badging.txt
+          grep -F "versionName='5.10.0'" reports/aapt2-badging.txt
+          grep -F "application-label:'Room Vision Gothic 5.10'" reports/aapt2-badging.txt
+          unzip -l "$APK" | tee reports/apk-files.txt
+          grep -F 'assets/castle_wall_slates_diff_2k.jpg' reports/apk-files.txt
+          for d in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$d"; done | strings > reports/dex-strings.txt
+          grep -F 'acquireDepthImage16Bits' reports/dex-strings.txt
+          grep -F 'RoomVisionSurfaceMaterial' reports/dex-strings.txt
+          grep -F 'GOTHIC SURFACE BLEND' reports/dex-strings.txt
+          mkdir -p dist
+          cp "$APK" dist/RoomVision_Gothic_5.10.0_SURFACE_BLEND.apk
+          stat -c 'apk_bytes=%s' dist/RoomVision_Gothic_5.10.0_SURFACE_BLEND.apk | tee reports/apk-size.txt
+          sha256sum dist/RoomVision_Gothic_5.10.0_SURFACE_BLEND.apk | tee dist/SHA256.txt
+
+      - name: Package source
+        if: success()
+        shell: bash
+        run: |
+          zip -qr dist/RoomVision_Gothic_5.10.0_SURFACE_BLEND_Source.zip app build.gradle.kts settings.gradle.kts gradle.properties generate_assets_ci.py reports -x 'app/build/*' 'build/*'
+
+      - name: Upload APK source and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoomVision_Gothic_5.10.0_SURFACE_BLEND
+          path: |
+            dist/*
+            reports/*
+          if-no-files-found: warn
+          retention-days: 14
