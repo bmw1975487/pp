@@ -1,0 +1,155 @@
+name: RoomVision 5.13 Locked Stable APK
+
+on:
+  push:
+    paths:
+      - '.github/workflows/roomvision513_locked_stable.yml'
+      - 'roomvision513_override_parts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: roomvision513-locked-stable
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore base and apply 5.13 locked stability override
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          cat roomvision55_seed/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision59_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision511_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision512_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision513_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+
+          python - <<'PYFIX'
+          from pathlib import Path
+          p=Path('app/src/main/java/com/roomvision/demo/NeuralCameraController.java')
+          s=p.read_text(encoding='utf-8')
+          old='if (gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
+          new='if (android.os.Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
+          if old in s: s=s.replace(old,new)
+          elif new not in s: raise SystemExit('legacy AGSL close line not found')
+          p.write_text(s,encoding='utf-8')
+          PYFIX
+
+          G=app/src/main/java/com/roomvision/demo/GothicArView.java
+          grep -F 'versionCode = 63' app/build.gradle.kts
+          grep -F 'versionName = "5.13.0"' app/build.gradle.kts
+          grep -F 'Room Vision Gothic 5.13 LOCKED' app/src/main/res/values/strings.xml
+          grep -F 'RoomVisionGothicLocked' "$G"
+          grep -F 'private static final int GRID_COLS = 72;' "$G"
+          grep -F 'private static final int GRID_ROWS = 54;' "$G"
+          grep -F 'vec2 q=uv*vec2(2.16,5.10);' "$G"
+          grep -F 'vec2 q=uv*2.44;' "$G"
+          grep -F 'vec2 stableSurfaceUv(vec3 p,vec3 n)' "$G"
+          grep -F 'shouldRefreshWorldMesh' "$G"
+          grep -F 'sampleEdgeAwareDepth' "$G"
+          grep -F 'ACTIVE_MESH_INTERVAL_NS = 66_000_000L' "$G"
+          grep -F 'MICRO_TRANSLATION_M = 0.010f' "$G"
+          grep -F 'stableDepthMisses' "$G"
+          grep -F 'GOTHIC LOCKED • 2X LARGER • WORLD STABLE' "$G"
+          grep -F 'gl_FragColor=vec4(clamp(material,0.0,1.0),1.0);' "$G"
+          test "$(grep -c 'texture2D(uCamera,camUv(suv)).rgb;' "$G")" -eq 1
+          if grep -q 'vec2 planeUv' "$G"; then echo 'ERROR: hard axis projection returned'; exit 10; fi
+          if grep -q 'uInvViewport' "$G"; then echo 'ERROR: expensive camera edge pass returned'; exit 11; fi
+          if grep -q 'materialAlpha=' "$G"; then echo 'ERROR: translucent material returned'; exit 12; fi
+          if grep -q 'import com.google.ar.core.Plane;' "$G"; then echo 'ERROR: plane renderer returned'; exit 13; fi
+          if grep -q 'getPolygon()' "$G"; then echo 'ERROR: plane polygons returned'; exit 14; fi
+          if grep -q 'pyrMeanShiftFiltering\|Imgproc.Canny\|SurfaceGothicEngine' "$G"; then echo 'ERROR: cartoon path returned'; exit 15; fi
+
+      - name: Generate material assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet pillow
+          python generate_assets_ci.py | tee reports/assets.txt
+          test -s app/src/main/assets/castle_wall_slates_diff_2k.jpg
+          test -s app/src/main/assets/cracks.png
+          test -s app/src/main/assets/grunge.jpg
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK 36 / Build Tools 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'platform-tools'
+
+      - name: Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Clean lint test assemble
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon --console=plain clean :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --stacktrace 2>&1 | tee reports/build.log
+
+      - name: Verify 5.13 locked APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          test -s "$APK"
+          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee reports/apksigner.txt
+          "$BT/aapt2" dump badging "$APK" | tee reports/aapt2-badging.txt
+          grep -F "versionName='5.13.0'" reports/aapt2-badging.txt
+          grep -F "application-label:'Room Vision Gothic 5.13 LOCKED'" reports/aapt2-badging.txt
+          unzip -l "$APK" | tee reports/apk-files.txt
+          grep -F 'assets/castle_wall_slates_diff_2k.jpg' reports/apk-files.txt
+          for d in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$d"; done | strings > reports/dex-strings.txt
+          grep -F 'acquireDepthImage16Bits' reports/dex-strings.txt
+          grep -F 'RoomVisionGothicLocked' reports/dex-strings.txt
+          grep -F 'GOTHIC LOCKED' reports/dex-strings.txt
+          grep -F 'shouldRefreshWorldMesh' reports/dex-strings.txt
+          grep -F 'sampleEdgeAwareDepth' reports/dex-strings.txt
+          grep -F 'stableSurfaceUv' reports/dex-strings.txt
+          mkdir -p dist
+          cp "$APK" dist/RoomVision_Gothic_5.13.0_LOCKED_STABLE.apk
+          stat -c 'apk_bytes=%s' dist/RoomVision_Gothic_5.13.0_LOCKED_STABLE.apk | tee reports/apk-size.txt
+          sha256sum dist/RoomVision_Gothic_5.13.0_LOCKED_STABLE.apk | tee dist/SHA256.txt
+
+      - name: Package source
+        if: success()
+        shell: bash
+        run: |
+          zip -qr dist/RoomVision_Gothic_5.13.0_LOCKED_STABLE_Source.zip app build.gradle.kts settings.gradle.kts gradle.properties generate_assets_ci.py reports -x 'app/build/*' 'build/*'
+
+      - name: Upload APK source and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoomVision_Gothic_5.13.0_LOCKED_STABLE
+          path: |
+            dist/*
+            reports/*
+          if-no-files-found: warn
+          retention-days: 14
