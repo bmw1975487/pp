@@ -6,6 +6,7 @@ on:
       - '.github/workflows/roomvision57_world.yml'
       - 'roomvision57_world.patch'
       - 'roomvision57_no_cge.patch'
+      - 'roomvision57_no_arcore.patch'
   workflow_dispatch:
 
 permissions:
@@ -41,26 +42,51 @@ jobs:
           set -euo pipefail
           mkdir -p reports
           cat roomvision55_seed/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
-          patch -p1 < roomvision57_world.patch
-          patch -p1 < roomvision57_no_cge.patch
-          sed -i 's/versionCode = 55/versionCode = 57/' app/build.gradle.kts
+
+          # Most of the 5.7 patch applies cleanly. One controller hunk can differ
+          # because the 5.5 CI already guarded close(); apply the rest, then enforce
+          # the final controller method below with deterministic Python replacement.
+          patch -p1 --forward < roomvision57_world.patch || true
+          patch -p1 --forward < roomvision57_no_cge.patch || true
+          patch -p1 --forward < roomvision57_no_arcore.patch
+
           python - <<'PY'
           from pathlib import Path
+
+          # Version.
+          g=Path('app/build.gradle.kts')
+          s=g.read_text()
+          s=s.replace('versionCode = 55','versionCode = 57').replace('versionCode = 56','versionCode = 57')
+          s=s.replace('versionName = "5.5.0"','versionName = "5.7.0"').replace('versionName = "5.6.0"','versionName = "5.7.0"')
+          g.write_text(s)
+
+          # Force the active Gothic path to be full-frame only, never CGE overlay.
           p=Path('app/src/main/java/com/roomvision/demo/NeuralCameraController.java')
           s=p.read_text()
-          old='if (gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
-          guarded='if (android.os.Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null) { try { gothicGpuFallback.close(); } catch (Throwable ignored) { } }'
-          if old in s: s=s.replace(old,guarded,1)
+          a=s.index('    private Bitmap renderGothic(Bitmap raw) {')
+          b=s.index('    private String gothicEngineLabel() {', a)
+          render='''    private Bitmap renderGothic(Bitmap raw) {\n        // 5.7: same ownership model as Matrix: transform every camera frame.\n        // No ARCore plane renderer and no castle texture pasted over the screen.\n        if (Build.VERSION.SDK_INT >= 33) {\n            try {\n                if (gothicGpuFallback == null) gothicGpuFallback = new AgslGothicRenderer(activity);\n                return gothicGpuFallback.render(raw, SystemClock.uptimeMillis(), 0f, 0f);\n            } catch (Throwable t) {\n                Log.w(TAG, "Full-frame Gothic AGSL unavailable; falling back", t);\n                if (android.os.Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null) {\n                    try { gothicGpuFallback.close(); } catch (Throwable ignored) { }\n                }\n                gothicGpuFallback = null;\n            }\n        }\n        return artEngine.process(raw, FilterType.GOTHIC);\n    }\n\n'''
+          s=s[:a]+render+s[b:]
+          a=s.index('    private String gothicEngineLabel() {')
+          b=s.index('    private void updateFps()', a)
+          label='''    private String gothicEngineLabel() {\n        if (Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null)\n            return "GOTHIC • FULL ROOM WORLD / AGSL";\n        return "GOTHIC • FULL ROOM WORLD / CPU";\n    }\n\n'''
+          s=s[:a]+label+s[b:]
           if '@android.annotation.SuppressLint("NewApi")\n    void stop() {' not in s:
               s=s.replace('    void stop() {','    @android.annotation.SuppressLint("NewApi")\n    void stop() {',1)
           p.write_text(s)
           PY
+
           grep -F 'versionName = "5.7.0"' app/build.gradle.kts
           grep -F 'versionCode = 57' app/build.gradle.kts
           grep -F 'Gothic is a full-frame WORLD effect like Matrix' app/src/main/java/com/roomvision/demo/MainActivity.java
+          grep -F 'ARCore GothicArView is deliberately not created' app/src/main/java/com/roomvision/demo/MainActivity.java
+          grep -F 'never resume ARCore here' app/src/main/java/com/roomvision/demo/MainActivity.java
           grep -F 'FULL ROOM WORLD / AGSL' app/src/main/java/com/roomvision/demo/NeuralCameraController.java
-          if grep -A40 'private Bitmap renderGothic' app/src/main/java/com/roomvision/demo/NeuralCameraController.java | grep -q 'cge.render'; then
+          if grep -A35 'private Bitmap renderGothic' app/src/main/java/com/roomvision/demo/NeuralCameraController.java | grep -q 'cge.render'; then
             echo 'ERROR: CGE overlay remains in active Gothic path'; exit 1
+          fi
+          if grep -A25 'private void selectLiveMode' app/src/main/java/com/roomvision/demo/MainActivity.java | grep -q 'resumeWorld'; then
+            echo 'ERROR: Gothic still switches to ARCore'; exit 2
           fi
 
       - name: Generate Gothic world assets
@@ -109,6 +135,7 @@ jobs:
           test -s "$APK"
           "$BT/apksigner" verify --verbose --print-certs "$APK" | tee reports/apksigner.txt
           "$BT/aapt2" dump badging "$APK" | tee reports/aapt2-badging.txt
+          grep -F "versionName='5.7.0'" reports/aapt2-badging.txt
           unzip -l "$APK" | tee reports/apk-files.txt
           for d in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$d"; done | strings > reports/dex-strings.txt
           grep -F 'GOTHIC • FULL ROOM WORLD / AGSL' reports/dex-strings.txt
