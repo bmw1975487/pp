@@ -1,0 +1,253 @@
+--- rv55base/app/src/main/java/com/roomvision/demo/MainActivity.java	2026-08-31 20:43:38.000000000 +0000
++++ rv55src2/app/src/main/java/com/roomvision/demo/MainActivity.java	2026-09-01 03:56:16.274692824 +0000
+@@ -56,7 +56,7 @@
+         root.setPadding(dp(24),dp(28),dp(24),dp(28));
+         root.setBackgroundColor(Color.rgb(6,7,9));
+ 
+-        TextView brand=label("ROOM VISION GOTHIC 5.5",14,Color.rgb(205,125,112),Gravity.CENTER);
++        TextView brand=label("ROOM VISION GOTHIC 5.7",14,Color.rgb(205,125,112),Gravity.CENTER);
+         brand.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+         brand.setLetterSpacing(.12f);
+         root.addView(brand,new LinearLayout.LayoutParams(-1,dp(50)));
+@@ -75,7 +75,7 @@
+         root.addView(desc,dl);
+ 
+         Button start=new Button(this);
+-        start.setText("ОТКРЫТЬ GOTHIC AR LIVE");
++        start.setText("ОТКРЫТЬ GOTHIC WORLD LIVE");
+         start.setTextSize(16);
+         start.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+         start.setTextColor(Color.WHITE);
+@@ -147,7 +147,7 @@
+         bl.setMargins(dp(12),dp(22),0,0);
+         root.addView(back,bl);
+ 
+-        liveMode=label("GOTHIC AR / DRACULA",12,Color.WHITE,Gravity.CENTER);
++        liveMode=label("GOTHIC WORLD / DRACULA",12,Color.WHITE,Gravity.CENTER);
+         liveMode.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+         GradientDrawable mb=new GradientDrawable();
+         mb.setColor(Color.argb(190,25,5,8));
+@@ -176,7 +176,7 @@
+         chips.setPadding(dp(4),0,dp(4),0);
+         for(FilterType type:FilterType.catalog()) {
+             Button b=new Button(this);
+-            b.setText(type==FilterType.GOTHIC?"Gothic AR":type.label);
++            b.setText(type==FilterType.GOTHIC?"Gothic World":type.label);
+             b.setTextSize(11);
+             b.setAllCaps(false);
+             b.setTextColor(Color.WHITE);
+@@ -216,20 +216,8 @@
+ 
+     private void selectLiveMode(FilterType type) {
+         liveFilter=type==null?FilterType.GOTHIC:type;
+-        if(liveFilter==FilterType.GOTHIC) {
+-            if(cameraController!=null) {
+-                cameraController.stop();
+-                cameraController=null;
+-            }
+-            if(processedView!=null) processedView.setVisibility(View.GONE);
+-            if(gothicArView!=null) {
+-                gothicArView.setVisibility(View.VISIBLE);
+-                gothicArView.resumeWorld();
+-            }
+-            if(liveMode!=null) liveMode.setText("GOTHIC AR / DRACULA");
+-            return;
+-        }
+-
++        // 5.7: Gothic is a full-frame WORLD effect like Matrix. Never switch to
++        // GothicArView/ARCore plane rendering: that only coats detected tables/walls.
+         if(gothicArView!=null) {
+             gothicArView.pauseWorld();
+             gothicArView.setVisibility(View.GONE);
+@@ -246,11 +234,7 @@
+     }
+ 
+     private void captureLiveFrame() {
+-        if(liveFilter==FilterType.GOTHIC) {
+-            if(gothicArView!=null) gothicArView.captureCurrentFrame();
+-        } else if(cameraController!=null) {
+-            cameraController.captureCurrentFrame();
+-        }
++        if(cameraController!=null) cameraController.captureCurrentFrame();
+     }
+ 
+     private void leaveCamera() {
+--- rv55base/app/src/main/java/com/roomvision/demo/NeuralCameraController.java	2026-08-31 21:10:04.000000000 +0000
++++ rv55src2/app/src/main/java/com/roomvision/demo/NeuralCameraController.java	2026-09-01 03:56:16.274953471 +0000
+@@ -33,7 +33,7 @@
+ import java.util.concurrent.atomic.AtomicBoolean;
+ 
+ final class NeuralCameraController {
+-    private static final String TAG = "RoomVisionGothic54";
++    private static final String TAG = "RoomVisionGothic57World";
+     private final ComponentActivity activity;
+     private final ImageView outputView;
+     private final TextView statusView;
+@@ -200,16 +200,14 @@
+     }
+ 
+     private Bitmap renderGothic(Bitmap raw) {
+-        // Android 13+: use the scene-anchored material renderer first. It estimates
+-        // camera-scene translation and moves material UV with the real room instead of
+-        // leaving a transparent texture fixed to the phone screen.
++        // 5.7: full-frame Gothic WORLD renderer. Same architecture as Matrix:
++        // every camera pixel is transformed; no ARCore planes / table-only coating.
+         if (Build.VERSION.SDK_INT >= 33) {
+             try {
+                 if (gothicGpuFallback == null) gothicGpuFallback = new AgslGothicRenderer(activity);
+-                float[] anchor = gothicMotion.update(raw);
+-                return gothicGpuFallback.render(raw, SystemClock.uptimeMillis(), anchor[0], anchor[1]);
++                return gothicGpuFallback.render(raw, SystemClock.uptimeMillis(), 0f, 0f);
+             } catch (Throwable t) {
+-                Log.w(TAG, "Surface-anchored AGSL unavailable; falling back to CGE", t);
++                Log.w(TAG, "Full-frame Gothic AGSL unavailable; falling back", t);
+                 if (android.os.Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null) { try { gothicGpuFallback.close(); } catch (Throwable ignored) { } }
+                 gothicGpuFallback = null;
+             }
+@@ -233,7 +231,7 @@
+ 
+     private String gothicEngineLabel() {
+         if (Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null)
+-            return "GOTHIC • SURFACE LOCK / CASTLE MATERIAL";
++            return "GOTHIC • FULL ROOM WORLD / AGSL";
+         CgeGothicEngine cge = cgeGothic;
+         if (cge != null && cge.isReady()) return "GOTHIC • GPUIMAGE PLUS COMPAT";
+         return "GOTHIC • SAFE FALLBACK";
+--- rv55base/app/src/main/java/com/roomvision/demo/AgslGothicRenderer.java	2026-08-31 19:08:33.000000000 +0000
++++ rv55src2/app/src/main/java/com/roomvision/demo/AgslGothicRenderer.java	2026-09-01 03:56:16.275064598 +0000
+@@ -22,47 +22,34 @@
+ final class AgslGothicRenderer implements AutoCloseable {
+     private static final String AGSL =
+             "uniform shader camera;\n" +
+-            "uniform shader castle;\n" +
+             "uniform shader detail;\n" +
+             "uniform shader grunge;\n" +
+             "uniform shader cracks;\n" +
+             "uniform shader fogmap;\n" +
+             "uniform float2 resolution;\n" +
+-            "uniform float2 anchor;\n" +
+             "uniform float time;\n" +
+             "float lum(half3 c){ return dot(float3(c),float3(.2126,.7152,.0722)); }\n" +
+             "half4 main(float2 p){\n" +
+-            "  half4 src4=camera.eval(p); float3 src=float3(src4.rgb); float l=lum(src4.rgb);\n" +
+-            "  float lxp=lum(camera.eval(p+float2(2.0,0.0)).rgb);\n" +
+-            "  float lxm=lum(camera.eval(p-float2(2.0,0.0)).rgb);\n" +
+-            "  float lyp=lum(camera.eval(p+float2(0.0,2.0)).rgb);\n" +
+-            "  float lym=lum(camera.eval(p-float2(0.0,2.0)).rgb);\n" +
+-            "  float2 grad=float2(lxp-lxm,lyp-lym);\n" +
+-            "  float edge=clamp((abs(grad.x)+abs(grad.y))*5.8,0.0,1.0);\n" +
+-            "  float flat=1.0-smoothstep(.10,.58,edge);\n" +
+-            "  float2 uv=p/resolution;\n" +
+-            "  float2 materialP=(p+anchor+grad*52.0);\n" +
+-            "  float3 stone=float3(castle.eval(materialP*2.30).rgb);\n" +
+-            "  float d=lum(detail.eval(materialP*5.6).rgb);\n" +
+-            "  float gr=lum(grunge.eval(materialP*1.35+float2(177.0,83.0)).rgb);\n" +
+-            "  float cr=lum(cracks.eval(materialP*.88+float2(71.0,229.0)).rgb);\n" +
+-            "  stone=(stone-.5)*1.10+.5; stone*=.74+d*.34;\n" +
+-            "  stone*=.38+l*.92; stone*=float3(.82,.89,.94);\n" +
+-            "  stone*=.88+gr*.22;\n" +
+-            "  float3 grade=mix(src,float3(l),.44); grade=(grade-.5)*1.20+.5; grade*=float3(.76,.84,.94); grade-=.035;\n" +
+-            "  float material=.48+.40*flat;\n" +
+-            "  float3 col=mix(grade,stone,material);\n" +
+-            "  float crack=smoothstep(.35,.78,cr)*(.18+.34*flat); col*=1.0-crack*.48;\n" +
+-            "  col+=edge*float3(.045,.055,.060);\n" +
+-            "  float fogN=lum(fogmap.eval(float2(p.x+time*18.0,p.y+time*8.0)*.74).rgb);\n" +
+-            "  float fog=smoothstep(.56,.90,fogN)*(.04+.15*smoothstep(.32,1.0,uv.y));\n" +
+-            "  col=mix(col,float3(.39,.44,.48),fog);\n" +
+-            "  float flick=.82+.12*sin(time*5.9)+.06*sin(time*13.7);\n" +
+-            "  float t1=exp(-length((uv-float2(.12,.55))*float2(1.0,1.35))*8.0);\n" +
+-            "  float t2=exp(-length((uv-float2(.88,.53))*float2(1.0,1.35))*8.0);\n" +
+-            "  col+=(t1+t2)*flick*float3(.25,.080,.016);\n" +
+-            "  float vig=1.0-smoothstep(.18,.72,length(uv-.5)); col*=mix(.58,1.0,vig);\n" +
+-            "  return half4(half3(clamp(col,0.0,1.0)),1.0);\n" +
++            " half4 s4=camera.eval(p); float3 s=float3(s4.rgb); float l=lum(s4.rgb);\n" +
++            " float lx1=lum(camera.eval(p+float2(2,0)).rgb), lx0=lum(camera.eval(p-float2(2,0)).rgb);\n" +
++            " float ly1=lum(camera.eval(p+float2(0,2)).rgb), ly0=lum(camera.eval(p-float2(0,2)).rgb);\n" +
++            " float e=clamp((abs(lx1-lx0)+abs(ly1-ly0))*7.2,0,1); float2 uv=p/resolution;\n" +
++            " float d=lum(detail.eval(p*3.4).rgb); float g=lum(grunge.eval(p*1.7+float2(93,211)).rgb);\n" +
++            " float c=lum(cracks.eval(p*.92+float2(61,179)).rgb);\n" +
++            " float carved=clamp(l*.70+d*.22+g*.10-e*.28,0,1);\n" +
++            " float3 stone=float3(carved*.58,carved*.64,carved*.72);\n" +
++            " stone=(stone-.5)*1.38+.43; stone-=smoothstep(.48,.82,c)*.22;\n" +
++            " float3 cold=mix(s,float3(l),.64)*float3(.50,.62,.78); cold=(cold-.5)*1.36+.42;\n" +
++            " float3 col=mix(cold,stone,.72); col-=e*.15;\n" +
++            " float fogN=lum(fogmap.eval(float2(p.x+time*27,p.y+time*9)*.66).rgb);\n" +
++            " float fog=smoothstep(.48,.88,fogN)*(.08+.24*smoothstep(.35,1,uv.y));\n" +
++            " col=mix(col,float3(.42,.47,.54),fog);\n" +
++            " float flick=.78+.15*sin(time*6.1)+.07*sin(time*15.3);\n" +
++            " float t1=exp(-length((uv-float2(.10,.57))*float2(1,1.45))*7.5);\n" +
++            " float t2=exp(-length((uv-float2(.90,.54))*float2(1,1.45))*7.5);\n" +
++            " col+=(t1+t2)*flick*float3(.34,.085,.012);\n" +
++            " float vig=1-smoothstep(.16,.72,length(uv-.5)); col*=mix(.42,1, vig);\n" +
++            " return half4(half3(clamp(col,0,1)),1);\n" +
+             "}\n";
+ 
+     private final RuntimeShader shader = new RuntimeShader(AGSL);
+@@ -75,7 +62,6 @@
+         grungeBitmap = load(context, "grunge.jpg");
+         cracksBitmap = load(context, "cracks.png");
+         fogBitmap = load(context, "fog.jpg");
+-        shader.setInputShader("castle", tiled(castleBitmap));
+         shader.setInputShader("detail", tiled(detailBitmap));
+         shader.setInputShader("grunge", tiled(grungeBitmap));
+         shader.setInputShader("cracks", tiled(cracksBitmap));
+@@ -88,7 +74,6 @@
+         Bitmap out=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+         shader.setInputShader("camera", new BitmapShader(input, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP));
+         shader.setFloatUniform("resolution",(float)w,(float)h);
+-        shader.setFloatUniform("anchor",anchorX,anchorY);
+         shader.setFloatUniform("time",timeMs/1000f);
+         new Canvas(out).drawRect(0,0,w,h,paint);
+         return out;
+--- rv55base/app/src/main/java/com/roomvision/demo/OpenCvFilterEngine.java	2026-08-31 18:46:46.000000000 +0000
++++ rv55src2/app/src/main/java/com/roomvision/demo/OpenCvFilterEngine.java	2026-09-01 03:56:16.275148715 +0000
+@@ -80,25 +80,25 @@
+         for(int y=sy;y<h;y+=sy)for(int x=0;x<w;x+=sx){int v=luma(p[Math.min(p.length-1,y*w+x)]);int idx=Math.min(chars.length()-1,(255-v)*(chars.length()-1)/255);paint.setAlpha(Math.min(255,105+v/2));canvas.drawText(String.valueOf(chars.charAt(idx)),x,y,paint);}in.recycle();return out;
+     }
+ 
+-    /** Gothic world: cold carved stone, mortar, cracks, vignette, drifting mist and torch glow. */
++    /** Gothic WORLD: transforms the whole camera frame; no AR plane and no brick-grid overlay. */
+     private Bitmap gothic(Bitmap in) {
+         int w=in.getWidth(),h=in.getHeight(); int[] src=pixels(in),lum=new int[src.length],dst=new int[src.length];
+         for(int i=0;i<src.length;i++) lum[i]=luma(src[i]);
+-        int bw=Math.max(64,w/6), bh=Math.max(48,h/9), mortar=Math.max(2,w/260);
+         for(int y=0;y<h;y++) for(int x=0;x<w;x++) {
+-            int i=y*w+x,c=src[i],v=lum[i]; int n=(hashNoise(x/3,y/3)-128)/7;
+-            int r=clamp((int)(v*.47)+n-12),g=clamp((int)(v*.52)+n-7),b=clamp((int)(v*.55)+n-3);
+-            int row=y/bh; int xx=x+(row%2)*(bw/2); boolean seam=(xx%bw<mortar)||(y%bh<mortar);
+-            if(seam){r=(int)(r*.34);g=(int)(g*.36);b=(int)(b*.37);} else if((xx%bw)<mortar*3||(y%bh)<mortar*3){r=clamp(r+13);g=clamp(g+12);b=clamp(b+10);}
+-            if(x>0&&x<w-1&&y>0&&y<h-1){int e=Math.abs(lum[i+1]-lum[i-1])+Math.abs(lum[i+w]-lum[i-w]);if(e>75){r=clamp(r-e/11);g=clamp(g-e/13);b=clamp(b-e/15);}}
+-            float nx=(x-w*.5f)/(w*.5f), ny=(y-h*.5f)/(h*.5f);float vig=Math.min(.48f,(nx*nx+ny*ny)*.30f);r=(int)(r*(1-vig));g=(int)(g*(1-vig));b=(int)(b*(1-vig));
++            int i=y*w+x,v=lum[i]; int noise=(hashNoise(x/2,y/2)-128)/9; int edge=0;
++            if(x>0&&x<w-1&&y>0&&y<h-1) edge=Math.min(255,(Math.abs(lum[i+1]-lum[i-1])+Math.abs(lum[i+w]-lum[i-w]))*3);
++            int base=clamp((int)((v-128)*1.22+118)+noise-edge/6);
++            int r=clamp((int)(base*.56)-16), g=clamp((int)(base*.66)-9), b=clamp((int)(base*.80)+2);
++            float nx=(x-w*.5f)/(w*.5f),ny=(y-h*.5f)/(h*.5f);float vig=Math.min(.58f,(nx*nx+ny*ny)*.38f);
++            r=(int)(r*(1-vig)); g=(int)(g*(1-vig)); b=(int)(b*(1-vig));
+             dst[i]=0xff000000|(r<<16)|(g<<8)|b;
+         }
+-        Bitmap out=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);out.setPixels(dst,0,w,0,0,w,h);in.recycle();Canvas canvas=new Canvas(out);
+-        Paint crack=new Paint(Paint.ANTI_ALIAS_FLAG);crack.setColor(Color.argb(145,12,13,14));crack.setStrokeWidth(Math.max(1,w/420f));
+-        for(int k=0;k<18;k++){int x=(k*97+w/7)%w,y=(k*149+h/9)%h;for(int s=0;s<5;s++){int nx=clampCoord(x+((hashNoise(k,s)%49)-24),w),ny=clampCoord(y+18+(hashNoise(s,k)%55),h);canvas.drawLine(x,y,nx,ny,crack);x=nx;y=ny;}}
+-        long t=SystemClock.uptimeMillis()/40;Paint fog=new Paint(Paint.ANTI_ALIAS_FLAG);fog.setColor(Color.argb(18,185,198,205));for(int j=0;j<7;j++){float cx=((j*137+t*(j+2))%(w+240))-120,cy=h*(.60f+j*.055f);canvas.drawOval(cx-150,cy-34,cx+150,cy+34,fog);}
+-        Paint torch=new Paint(Paint.ANTI_ALIAS_FLAG);for(int side=0;side<2;side++){float cx=side==0?w*.12f:w*.88f,cy=h*.58f;for(int rad=100;rad>18;rad-=18){torch.setColor(Color.argb(Math.max(5,32-rad/4),255,132,48));canvas.drawCircle(cx,cy,rad,torch);}}
++        Bitmap out=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);out.setPixels(dst,0,w,0,0,w,h);in.recycle(); Canvas canvas=new Canvas(out);
++        long t=SystemClock.uptimeMillis()/35; Paint fog=new Paint(Paint.ANTI_ALIAS_FLAG); fog.setColor(Color.argb(30,175,190,205));
++        for(int j=0;j<9;j++){float cx=((j*149+t*(j+2))%(w+300))-150,cy=h*(.48f+j*.055f);canvas.drawOval(cx-190,cy-42,cx+190,cy+42,fog);}
++        Paint torch=new Paint(Paint.ANTI_ALIAS_FLAG); for(int side=0;side<2;side++){float cx=side==0?w*.10f:w*.90f,cy=h*.58f;for(int rad=130;rad>20;rad-=18){torch.setColor(Color.argb(Math.max(4,42-rad/4),255,112,32));canvas.drawCircle(cx,cy,rad,torch);}}
++        Paint crack=new Paint(Paint.ANTI_ALIAS_FLAG);crack.setColor(Color.argb(125,8,9,12));crack.setStrokeWidth(Math.max(1,w/430f));
++        for(int k=0;k<15;k++){int x=(k*101+w/9)%w,y=(k*163+h/11)%h;for(int q=0;q<4;q++){int nx2=clampCoord(x+((hashNoise(k,q)%55)-27),w),ny2=clampCoord(y+18+(hashNoise(q,k)%61),h);canvas.drawLine(x,y,nx2,ny2,crack);x=nx2;y=ny2;}}
+         return out;
+     }
+ 
+--- rv55base/app/build.gradle.kts	2026-08-31 20:43:48.000000000 +0000
++++ rv55src2/app/build.gradle.kts	2026-09-01 03:56:16.275224046 +0000
+@@ -12,7 +12,7 @@
+         minSdk = 29
+         targetSdk = 36
+         versionCode = 55
+-        versionName = "5.5.0"
++        versionName = "5.7.0"
+         ndk {
+             abiFilters += listOf("arm64-v8a")
+         }
