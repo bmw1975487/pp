@@ -29,6 +29,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Restore 5.5 base and apply 5.8 surface override
         shell: bash
         run: |
@@ -51,6 +56,15 @@ jobs:
           if grep -q 'gothicArView=new GothicArView' app/src/main/java/com/roomvision/demo/MainActivity.java; then
             echo 'ERROR: ARCore view still created'; exit 2
           fi
+
+      - name: Generate base visual assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet pillow
+          python generate_assets_ci.py
+          test -s app/src/main/res/drawable/icon.png
+          stat -c 'icon_bytes=%s' app/src/main/res/drawable/icon.png | tee reports/generated-assets.txt
 
       - name: Android SDK
         uses: android-actions/setup-android@v3
