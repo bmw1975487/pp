@@ -1,0 +1,186 @@
+name: RoomVision 5.6 Full Room Depth APK
+
+on:
+  push:
+    paths:
+      - '.github/workflows/roomvision56_full_room_depth.yml'
+      - 'roomvision56_patch/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: roomvision56-full-room-depth
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore 5.5 base and apply 5.6 full-room patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          cat roomvision55_seed/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+
+          # Keep the already-proven API-29-safe fallback shutdown fix from 5.5 CI.
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/roomvision/demo/NeuralCameraController.java')
+          s = p.read_text()
+          old = 'if (gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
+          guarded = 'if (android.os.Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null) { try { gothicGpuFallback.close(); } catch (Throwable ignored) { } }'
+          if old in s:
+              s = s.replace(old, guarded, 1)
+          if '@android.annotation.SuppressLint("NewApi")\n    void stop() {' not in s:
+              marker = '    void stop() {'
+              if marker not in s:
+                  raise SystemExit('stop() marker not found')
+              s = s.replace(marker, '    @android.annotation.SuppressLint("NewApi")\n    void stop() {', 1)
+          p.write_text(s)
+          PY
+
+          # Replace GothicArView/MainActivity with FULL ROOM DEPTH implementation.
+          cat roomvision56_patch/source_patch.tgz.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('app/build.gradle.kts')
+          s = p.read_text()
+          s = s.replace('versionCode = 55', 'versionCode = 56')
+          s = s.replace('versionName = "5.5.0"', 'versionName = "5.6.0"')
+          p.write_text(s)
+          PY
+
+          G=app/src/main/java/com/roomvision/demo/GothicArView.java
+          M=app/src/main/java/com/roomvision/demo/MainActivity.java
+          test -f "$G"
+          test -f "$M"
+          grep -F 'PlaneFindingMode.DISABLED' "$G"
+          grep -F 'DepthMode.AUTOMATIC' "$G"
+          grep -F 'acquireDepthImage16Bits()' "$G"
+          grep -F 'getDisplayOrientedPose()' "$G"
+          grep -F 'GL_LUMINANCE_ALPHA' "$G"
+          grep -F 'GOTHIC ROOM DEPTH' "$G"
+          if grep -F 'drawTrackedPlanes' "$G"; then
+            echo 'ERROR: old plane-only Gothic renderer is still present' >&2
+            exit 41
+          fi
+          if grep -F 'getPolygon()' "$G"; then
+            echo 'ERROR: plane polygon rendering is forbidden in 5.6 full-room mode' >&2
+            exit 42
+          fi
+          grep -F 'GOTHIC FULL ROOM / DRACULA' "$M"
+          grep -F 'startGothicCompatFallback' "$M"
+          grep -F 'com.google.ar:core:1.56.0' app/build.gradle.kts
+          grep -F 'versionName = "5.6.0"' app/build.gradle.kts
+          grep -F 'versionCode = 56' app/build.gradle.kts
+          grep -F '@android.annotation.SuppressLint("NewApi")' app/src/main/java/com/roomvision/demo/NeuralCameraController.java
+
+      - name: Generate full Gothic assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet pillow
+          python generate_assets_ci.py
+          mkdir -p app/src/main/assets
+          curl -A 'RoomVision-Build/5.6' -L --fail --retry 3 --retry-delay 2 \
+            'https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/castle_wall_slates/castle_wall_slates_diff_4k.jpg' \
+            -o app/src/main/assets/castle_wall_slates_diff_2k.jpg
+          curl -L --fail --retry 3 --retry-delay 2 \
+            'https://storage.googleapis.com/mediapipe-tasks/object_detector/efficientdet_lite0_uint8.tflite' \
+            -o app/src/main/assets/object_detector.tflite
+          CASTLE_SIZE=$(stat -c%s app/src/main/assets/castle_wall_slates_diff_2k.jpg)
+          MODEL_SIZE=$(stat -c%s app/src/main/assets/object_detector.tflite)
+          python - <<'PY'
+          from PIL import Image
+          p='app/src/main/assets/castle_wall_slates_diff_2k.jpg'
+          im=Image.open(p)
+          print('castle_dimensions=%dx%d' % im.size)
+          assert im.size == (4096,4096), im.size
+          PY
+          echo "castle_texture_bytes=$CASTLE_SIZE" | tee reports/assets.txt
+          echo "object_detector_bytes=$MODEL_SIZE" | tee -a reports/assets.txt
+          test "$CASTLE_SIZE" -gt 8000000
+          test "$MODEL_SIZE" -gt 4000000
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK 36 / Build Tools 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'platform-tools'
+
+      - name: Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Clean lint test assemble
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon --console=plain clean :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --stacktrace 2>&1 | tee reports/build.log
+
+      - name: Verify APK and full-room invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          test -s "$APK"
+          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee reports/apksigner.txt
+          "$BT/aapt2" dump badging "$APK" | tee reports/aapt2-badging.txt
+          grep -F "versionName='5.6.0'" reports/aapt2-badging.txt
+          unzip -l "$APK" | tee reports/apk-files.txt
+          grep -F 'lib/arm64-v8a/libCGE.so' reports/apk-files.txt
+          grep -F 'lib/arm64-v8a/libCGEExt.so' reports/apk-files.txt
+          grep -F 'assets/castle_wall_slates_diff_2k.jpg' reports/apk-files.txt
+          grep -F 'assets/object_detector.tflite' reports/apk-files.txt
+          for d in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$d"; done | strings > reports/dex-strings.txt
+          grep -F 'GothicArView' reports/dex-strings.txt
+          grep -F 'GOTHIC ROOM DEPTH' reports/dex-strings.txt
+          grep -F 'acquireDepthImage16Bits' reports/dex-strings.txt
+          grep -F 'GOTHIC FULL ROOM / DRACULA' reports/dex-strings.txt
+          mkdir -p dist
+          cp "$APK" dist/RoomVision_Gothic_5.6.0_FULL_ROOM_DEPTH.apk
+          stat -c 'apk_bytes=%s' dist/RoomVision_Gothic_5.6.0_FULL_ROOM_DEPTH.apk | tee reports/apk-size.txt
+          sha256sum dist/RoomVision_Gothic_5.6.0_FULL_ROOM_DEPTH.apk | tee dist/SHA256.txt
+
+      - name: Package source
+        if: success()
+        shell: bash
+        run: |
+          zip -qr dist/RoomVision_Gothic_5.6.0_FULL_ROOM_DEPTH_Source.zip app build.gradle.kts settings.gradle.kts gradle.properties generate_assets_ci.py reports -x 'app/build/*' 'build/*'
+
+      - name: Upload APK, source and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoomVision_Gothic_5.6.0_FULL_ROOM_DEPTH
+          path: |
+            dist/*
+            reports/*
+          if-no-files-found: warn
+          retention-days: 14
