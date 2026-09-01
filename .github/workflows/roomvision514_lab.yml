@@ -1,0 +1,128 @@
+name: RoomVision 5.14 Secret Lab APK
+
+on:
+  push:
+    paths:
+      - '.github/workflows/roomvision514_lab.yml'
+      - 'roomvision514_lab_override/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: roomvision514-lab
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore base and apply 5.14 LAB override
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          cat roomvision55_seed/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision59_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision511_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision512_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision513_fixed_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision514_lab_override/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          python - <<'PYFIX'
+          from pathlib import Path
+          p=Path('app/src/main/java/com/roomvision/demo/NeuralCameraController.java')
+          s=p.read_text(encoding='utf-8')
+          old='if (gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
+          new='if (android.os.Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
+          if old in s: s=s.replace(old,new)
+          elif new not in s: raise SystemExit('legacy AGSL close line not found')
+          p.write_text(s,encoding='utf-8')
+          PYFIX
+          G=app/src/main/java/com/roomvision/demo/GothicArView.java
+          grep -F 'versionCode = 64' app/build.gradle.kts
+          grep -F 'versionName = "5.14.0"' app/build.gradle.kts
+          grep -F 'Room Vision LAB 5.14' app/src/main/res/values/strings.xml
+          grep -F 'RoomVisionLab514' "$G"
+          grep -F 'vec3 labWall(vec3 p,vec3 n,float sceneLuma)' "$G"
+          grep -F 'vec3 labFloor(vec3 p,float sceneLuma)' "$G"
+          grep -F 'vec3 labEquipment(vec3 p,float sceneLuma)' "$G"
+          grep -F 'SECRET LAB • PANEL REPLACE • WORLD LOCK' "$G"
+          grep -F 'shouldRefreshWorldMesh' "$G"
+          grep -F 'sampleEdgeAwareDepth' "$G"
+          grep -F 'gl_FragColor=vec4(clamp(material,0.0,1.0),1.0);' "$G"
+          test "$(grep -c 'texture2D(uCamera,camUv(suv)).rgb;' "$G")" -eq 1
+          if grep -q 'stableSurfaceUv' "$G"; then echo 'ERROR: normal-driven UV returned'; exit 10; fi
+          if grep -q 'materialAlpha=' "$G"; then echo 'ERROR: translucent material returned'; exit 11; fi
+          if grep -q 'import com.google.ar.core.Plane;' "$G"; then echo 'ERROR: plane renderer returned'; exit 12; fi
+          if grep -q 'pyrMeanShiftFiltering\|Imgproc.Canny\|SurfaceGothicEngine' "$G"; then echo 'ERROR: cartoon path returned'; exit 13; fi
+      - name: Generate assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet pillow
+          python generate_assets_ci.py | tee reports/assets.txt
+          test -s app/src/main/assets/grunge.jpg
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install SDK 36 / Build Tools 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'platform-tools'
+      - name: Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Clean lint test assemble
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon --console=plain clean :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --stacktrace 2>&1 | tee reports/build.log
+      - name: Verify 5.14 LAB APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          test -s "$APK"
+          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee reports/apksigner.txt
+          "$BT/aapt2" dump badging "$APK" | tee reports/aapt2-badging.txt
+          grep -F "versionName='5.14.0'" reports/aapt2-badging.txt
+          grep -F "application-label:'Room Vision LAB 5.14'" reports/aapt2-badging.txt
+          for d in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$d"; done | strings > reports/dex-strings.txt
+          grep -F 'RoomVisionLab514' reports/dex-strings.txt
+          grep -F 'SECRET LAB' reports/dex-strings.txt
+          grep -F 'labWall' reports/dex-strings.txt
+          mkdir -p dist
+          cp "$APK" dist/RoomVision_5.14.0_SECRET_LAB.apk
+          stat -c 'apk_bytes=%s' dist/RoomVision_5.14.0_SECRET_LAB.apk | tee reports/apk-size.txt
+          sha256sum dist/RoomVision_5.14.0_SECRET_LAB.apk | tee dist/SHA256.txt
+      - name: Package source
+        if: success()
+        shell: bash
+        run: |
+          zip -qr dist/RoomVision_5.14.0_SECRET_LAB_Source.zip app build.gradle.kts settings.gradle.kts gradle.properties generate_assets_ci.py reports -x 'app/build/*' 'build/*'
+      - name: Upload APK source and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoomVision_5.14.0_SECRET_LAB
+          path: |
+            dist/*
+            reports/*
+          if-no-files-found: warn
+          retention-days: 14
