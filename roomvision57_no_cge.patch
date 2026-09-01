@@ -1,0 +1,34 @@
+--- rv57inter/app/src/main/java/com/roomvision/demo/NeuralCameraController.java	2026-09-01 03:58:05.873240803 +0000
++++ rv55src2/app/src/main/java/com/roomvision/demo/NeuralCameraController.java	2026-09-01 03:58:00.142772206 +0000
+@@ -213,28 +213,15 @@
+             }
+         }
+ 
+-        // Older Android: retain GPUImage Plus as compatibility fallback.
+-        CgeGothicEngine cge = cgeGothic;
+-        if (cge != null) {
+-            try {
+-                if (!cge.isReady()) cge.initialize();
+-                if (cge.isReady()) {
+-                    Bitmap result = cge.render(raw);
+-                    if (result != null) return result;
+-                }
+-            } catch (Throwable t) {
+-                Log.e(TAG, "CGE Gothic disabled, using safe fallback", t);
+-            }
+-        }
++        // Any AGSL failure / Android 10-12: stay in full-frame scene processing.
++        // Never invoke CGE castle-texture blend in active Gothic: it reads as a screen overlay.
+         return artEngine.process(raw, FilterType.GOTHIC);
+     }
+ 
+     private String gothicEngineLabel() {
+         if (Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null)
+             return "GOTHIC • FULL ROOM WORLD / AGSL";
+-        CgeGothicEngine cge = cgeGothic;
+-        if (cge != null && cge.isReady()) return "GOTHIC • GPUIMAGE PLUS COMPAT";
+-        return "GOTHIC • SAFE FALLBACK";
++        return "GOTHIC • FULL ROOM WORLD / CPU";
+     }
+ 
+     private void updateFps() {
