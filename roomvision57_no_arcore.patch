@@ -1,0 +1,37 @@
+--- a/app/src/main/java/com/roomvision/demo/MainActivity.java
++++ b/app/src/main/java/com/roomvision/demo/MainActivity.java
+@@ -120,16 +120,7 @@
+         FrameLayout root=new FrameLayout(this);
+         root.setBackgroundColor(Color.BLACK);
+ 
+-        gothicArView=new GothicArView(this,new GothicArView.Listener() {
+-            @Override public void onStatus(String status) {
+-                if(liveStatus!=null) liveStatus.setText(status);
+-            }
+-            @Override public void onUnavailable(String reason) {
+-                if(liveStatus!=null) liveStatus.setText("AR SURFACE НЕДОСТУПЕН • "+reason);
+-                Toast.makeText(MainActivity.this,reason,Toast.LENGTH_LONG).show();
+-            }
+-        });
+-        root.addView(gothicArView,new FrameLayout.LayoutParams(-1,-1));
++        // 5.7 full-room mode: ARCore GothicArView is deliberately not created.
+ 
+         processedView=new ImageView(this);
+         processedView.setBackgroundColor(Color.BLACK);
+@@ -254,14 +245,11 @@
+ 
+     @Override protected void onResume() {
+         super.onResume();
+-        if(cameraMode && liveFilter==FilterType.GOTHIC && gothicArView!=null &&
+-                checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED) {
+-            gothicArView.resumeWorld();
+-        }
++        // CameraX controller owns the camera in 5.7; never resume ARCore here.
+     }
+ 
+     @Override protected void onPause() {
+-        if(gothicArView!=null) gothicArView.pauseWorld();
++        // No ARCore session in 5.7 full-room mode.
+         super.onPause();
+     }
+ 
