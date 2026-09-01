@@ -42,7 +42,23 @@ jobs:
           cat roomvision55_seed/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
           cat roomvision59_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
 
+          # Legacy AGSL renderer is not used by the 5.9 Gothic path, but its close()
+          # method requires API 33. Guard it so minSdk 29 lint remains valid.
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/roomvision/demo/NeuralCameraController.java')
+          s = p.read_text(encoding='utf-8')
+          old = 'if (gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
+          new = 'if (android.os.Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
+          if old in s:
+              s = s.replace(old, new)
+          elif new not in s:
+              raise SystemExit('Expected legacy AGSL close line not found')
+          p.write_text(s, encoding='utf-8')
+          PY
+
           G=app/src/main/java/com/roomvision/demo/GothicArView.java
+          N=app/src/main/java/com/roomvision/demo/NeuralCameraController.java
           grep -F 'versionCode = 59' app/build.gradle.kts
           grep -F 'versionName = "5.9.0"' app/build.gradle.kts
           grep -F 'Room Vision Gothic 5.9' app/src/main/res/values/strings.xml
@@ -54,6 +70,7 @@ jobs:
           grep -F 'texture2D(uStone,p.xz*s)' "$G"
           grep -F 'texture2D(uStone,p.xy*s)' "$G"
           grep -F 'glDrawArrays(GLES20.GL_TRIANGLES' "$G"
+          grep -F 'android.os.Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null' "$N"
 
           if grep -q 'import com.google.ar.core.Plane;' "$G"; then
             echo 'ERROR: tracked-plane renderer returned'; exit 11
