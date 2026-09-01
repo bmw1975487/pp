@@ -4,7 +4,7 @@ on:
   push:
     paths:
       - '.github/workflows/roomvision58_surface.yml'
-      - 'roomvision58_override.b64'
+      - 'roomvision58_override_parts/**'
   workflow_dispatch:
 
 permissions:
@@ -35,7 +35,7 @@ jobs:
           set -euo pipefail
           mkdir -p reports
           cat roomvision55_seed/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
-          base64 -d roomvision58_override.b64 | tar -xz
+          cat roomvision58_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
 
           grep -F 'versionName = "5.8.0"' app/build.gradle.kts
           grep -F 'versionCode = 58' app/build.gradle.kts
