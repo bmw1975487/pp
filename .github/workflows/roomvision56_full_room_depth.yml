@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Restore 5.5 base and apply 5.6 full-room patch
+      - name: Restore 5.5 base and apply verified 5.6 full-room patch
         shell: bash
         run: |
           set -euo pipefail
@@ -58,8 +58,11 @@ jobs:
           p.write_text(s)
           PY
 
-          # Replace GothicArView/MainActivity with FULL ROOM DEPTH implementation.
-          cat roomvision56_patch/source_patch.tgz.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          # Reassemble the 5.6 source patch from byte-verified small parts.
+          cat roomvision56_patch/parts/part_* > /tmp/roomvision56_patch.b64
+          base64 -d /tmp/roomvision56_patch.b64 > /tmp/roomvision56_patch.tgz
+          echo '053b551a8764c925063899a1b437fdab3e0eada18a2f00383726f106440995b4  /tmp/roomvision56_patch.tgz' | sha256sum -c -
+          tar -xzf /tmp/roomvision56_patch.tgz
 
           python - <<'PY'
           from pathlib import Path
@@ -94,6 +97,9 @@ jobs:
           grep -F 'versionName = "5.6.0"' app/build.gradle.kts
           grep -F 'versionCode = 56' app/build.gradle.kts
           grep -F '@android.annotation.SuppressLint("NewApi")' app/src/main/java/com/roomvision/demo/NeuralCameraController.java
+          sha256sum "$G" "$M" | tee reports/full-room-source-sha256.txt
+          grep -F '25c35ec70f04f0e35bf4e956b49935463bc44813e24c8719ae994d07474dcef2' reports/full-room-source-sha256.txt
+          grep -F 'ba5b14eb0ae310a26567db4d107757a22fb55f98415752e3046c5e3a015dd396' reports/full-room-source-sha256.txt
 
       - name: Generate full Gothic assets
         shell: bash
