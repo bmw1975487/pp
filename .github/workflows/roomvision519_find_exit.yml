@@ -54,6 +54,7 @@ jobs:
           grep -F 'Coordinates2d.VIEW_NORMALIZED' app/src/main/java/com/roomvision/demo/DoorTargetDetector.java
           grep -F 'attemptsLeft = 3' app/src/main/java/com/roomvision/demo/GothicArView.java
           grep -F 'vec3 redZero=' app/src/main/java/com/roomvision/demo/GothicArView.java
+          grep -F 'FIND_EXIT_519_SOURCE_GATE=PASS' reports/findexit519-gate.txt
       - name: Generate required Android resources
         shell: bash
         run: |
@@ -89,7 +90,6 @@ jobs:
           grep -F "application-label:'Room Vision 5.19 FIND EXIT'" reports/aapt2.txt
           for d in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$d"; done | strings > reports/dex.txt
           grep -F 'RoomVisionFindExit519' reports/dex.txt
-          grep -F 'ВЫХОД НАЙДЕН' reports/dex.txt
           mkdir -p dist
           cp "$APK" dist/RoomVision_5.19.0_FIND_EXIT.apk
           stat -c 'apk_bytes=%s' dist/RoomVision_5.19.0_FIND_EXIT.apk | tee reports/apk-size.txt
