@@ -1,0 +1,109 @@
+name: RoomVision 5.19 Find Exit APK
+on:
+  push:
+    paths:
+      - '.github/workflows/roomvision519_find_exit.yml'
+      - 'roomvision519_find_exit_patch.py'
+      - 'roomvision519_DoorTargetDetector.java'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Matrix base and apply Find Exit 5.19
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          cat roomvision55_seed/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision59_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision511_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision512_override_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision513_fixed_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          cat roomvision514_lab_fixed_parts/part_*.b64 | tr -d '\n\r ' | base64 -d | tar -xz
+          python roomvision515_instant_patch.py | tee reports/instant515-gate.txt
+          python roomvision516_binary_patch.py | tee reports/binary516-gate.txt
+          python roomvision517_binary_surface_patch.py | tee reports/binary517-gate.txt
+          python roomvision518_matrix_flow_patch.py | tee reports/matrix518-gate.txt
+          cp roomvision519_DoorTargetDetector.java app/src/main/java/com/roomvision/demo/DoorTargetDetector.java
+          python roomvision519_find_exit_patch.py | tee reports/findexit519-gate.txt
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('app/src/main/java/com/roomvision/demo/NeuralCameraController.java')
+          s=p.read_text(encoding='utf-8')
+          old='if (gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
+          new='if (android.os.Build.VERSION.SDK_INT >= 33 && gothicGpuFallback != null) try { gothicGpuFallback.close(); } catch (Throwable ignored) { }'
+          if old in s: s=s.replace(old,new)
+          elif new not in s: raise SystemExit('legacy AGSL close line not found')
+          p.write_text(s,encoding='utf-8')
+          PY
+          grep -F 'Coordinates2d.VIEW_NORMALIZED' app/src/main/java/com/roomvision/demo/DoorTargetDetector.java
+          grep -F 'attemptsLeft = 3' app/src/main/java/com/roomvision/demo/GothicArView.java
+          grep -F 'vec3 redZero=' app/src/main/java/com/roomvision/demo/GothicArView.java
+      - name: Generate required Android resources
+        shell: bash
+        run: |
+          python -m pip install --quiet pillow
+          python generate_assets_ci.py | tee reports/assets.txt
+          test -s app/src/main/res/drawable/icon.png
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install SDK
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'platform-tools'
+      - name: Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon --console=plain clean :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --stacktrace 2>&1 | tee reports/build.log
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          test -s "$APK"
+          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee reports/apksigner.txt
+          "$BT/aapt2" dump badging "$APK" | tee reports/aapt2.txt
+          grep -F "versionName='5.19.0'" reports/aapt2.txt
+          grep -F "application-label:'Room Vision 5.19 FIND EXIT'" reports/aapt2.txt
+          for d in $(zipinfo -1 "$APK" | grep '^classes.*\.dex$'); do unzip -p "$APK" "$d"; done | strings > reports/dex.txt
+          grep -F 'RoomVisionFindExit519' reports/dex.txt
+          grep -F 'ВЫХОД НАЙДЕН' reports/dex.txt
+          mkdir -p dist
+          cp "$APK" dist/RoomVision_5.19.0_FIND_EXIT.apk
+          stat -c 'apk_bytes=%s' dist/RoomVision_5.19.0_FIND_EXIT.apk | tee reports/apk-size.txt
+          sha256sum dist/RoomVision_5.19.0_FIND_EXIT.apk | tee dist/SHA256.txt
+      - name: Package source
+        if: success()
+        shell: bash
+        run: zip -qr dist/RoomVision_5.19.0_FIND_EXIT_Source.zip app build.gradle.kts settings.gradle.kts gradle.properties reports -x 'app/build/*' 'build/*'
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoomVision_5.19.0_FIND_EXIT
+          path: |
+            dist/*
+            reports/*
+          retention-days: 14
