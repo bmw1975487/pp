@@ -1,0 +1,121 @@
+name: Room Vision GPUImage Gothic 5.3 APK
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-roomvision:
+    if: startsWith(github.head_ref, 'chatgpt/roomvision-neural-') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Generate launcher assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check pillow
+          python3 roomvision_gothic_demo/generate_assets.py
+          test -s roomvision_gothic_demo/app/src/main/res/drawable/icon.png
+
+      - name: Install CC0 castle material
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSETS='roomvision_gothic_demo/app/src/main/assets'
+          mkdir -p "$ASSETS"
+          # Poly Haven Castle Wall Slates, CC0. Use the known official 4K diffuse file;
+          # the app-side filename is kept stable so the engine config never changes.
+          curl -fL --retry 5 --retry-delay 2 \
+            'https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/castle_wall_slates/castle_wall_slates_diff_4k.jpg' \
+            -o "$ASSETS/castle_wall_slates_diff_2k.jpg"
+          test "$(stat -c%s "$ASSETS/castle_wall_slates_diff_2k.jpg")" -gt 1000000
+          sha256sum "$ASSETS/castle_wall_slates_diff_2k.jpg"
+
+      - name: Install MediaPipe quest object detector model
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSETS='roomvision_gothic_demo/app/src/main/assets'
+          mkdir -p "$ASSETS"
+          curl -fL --retry 4 --retry-delay 2 \
+            'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite' \
+            -o "$ASSETS/object_detector.tflite"
+          test "$(stat -c%s "$ASSETS/object_detector.tflite")" -gt 4000000
+          sha256sum "$ASSETS/object_detector.tflite"
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          SDKMANAGER="$SDKROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then SDKMANAGER="$(find "$SDKROOT/cmdline-tools" -type f -name sdkmanager -perm -111 | sort | tail -n 1)"; fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" 'platforms;android-36' 'build-tools;35.0.0' 'platform-tools'
+
+      - name: Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Build and lint
+        working-directory: roomvision_gothic_demo
+        shell: bash
+        run: |
+          set +e
+          gradle --no-daemon clean :app:assembleDebug :app:lintDebug --stacktrace
+          RC=$?
+          if [[ "$RC" -ne 0 ]]; then find app/build -name 'lint-results-debug.txt' -type f -print -exec cat {} \; || true; fi
+          exit "$RC"
+
+      - name: Verify GPUImage Gothic APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK='roomvision_gothic_demo/app/build/outputs/apk/debug/app-debug.apk'
+          test -s "$APK"
+          SIZE=$(stat -c%s "$APK")
+          echo "APK_BYTES=$SIZE"
+          SDKROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          "$SDKROOT/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+          BADGING="$($SDKROOT/build-tools/35.0.0/aapt dump badging "$APK")"
+          echo "$BADGING" | grep -F "package: name='com.roomvision.modern.debug'"
+          echo "$BADGING" | grep -F "versionName='5.3.0'"
+          unzip -l "$APK" | grep -F 'assets/castle_wall_slates_diff_2k.jpg'
+          unzip -l "$APK" | grep -F 'assets/object_detector.tflite'
+          echo '--- native engine markers ---'
+          unzip -l "$APK" | grep -Ei 'libCGE|wysaid|filament|mediapipe|litert' | head -n 120 || true
+          mkdir -p roomvision_dist
+          cp "$APK" roomvision_dist/RoomVision_GPUImage_Gothic_5.3.0.apk
+          sha256sum roomvision_dist/RoomVision_GPUImage_Gothic_5.3.0.apk > roomvision_dist/RoomVision_GPUImage_Gothic_5.3.0.apk.sha256
+
+      - name: Package complete source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf roomvision_gothic_demo/.gradle roomvision_gothic_demo/app/build roomvision_gothic_demo/build
+          cd roomvision_gothic_demo
+          zip -qr ../roomvision_dist/RoomVision_GPUImage_Gothic_5.3.0_Source.zip . -x '*.DS_Store'
+          cd ..
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoomVision_GPUImage_Gothic_5.3.0_FULL
+          path: roomvision_dist/*
+          if-no-files-found: error
+          retention-days: 7
